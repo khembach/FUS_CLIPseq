@@ -1,0 +1,10 @@
+_Store
+._*
+.Rhistory
+FASTQ/
+FASTQtrimmed/
+FastQC/
+omniCLIP/
+STAR/
+MultiQC/
+logs/
