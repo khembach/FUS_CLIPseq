@@ -1,0 +1,25 @@
+name: omniCLIP
+channels:
+- bioconda
+- conda-forge
+- defaults
+dependencies:
+- python=2.7
+- biopython
+- brewer2mpl
+- cython
+- gffutils
+- h5py
+- intervaltree
+- matplotlib
+- numpy
+- pandas
+- pysam
+- scikit-learn
+- scipy
+- statsmodels
+- pip"
+    # prettyplotlib
+
+## create environment, install pip library, export environment file (maybe replace old file, because this one containes the installed pip libraries)
+## the library is in /home/kathi/miniconda3/envs/omniCLIP/include/
