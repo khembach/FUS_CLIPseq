@@ -1,4 +1,4 @@
-_Store
+.DS_Store
 ._*
 .Rhistory
 FASTQ/
@@ -8,3 +8,4 @@ omniCLIP/
 STAR/
 MultiQC/
 logs/
+.snakemake/
