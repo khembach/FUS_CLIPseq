@@ -20,9 +20,9 @@ rule all:
 		# expand("FASTQtrimmed/{sample}_trimmed.fq.gz", sample = samples.ID.values.tolist()),
 		# expand("FastQC/{sample}_trimmed_fastqc.zip", sample = samples.ID.values.tolist()),
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
-		expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
-		"MultiQC/multiqc_report.html",
-		"omniCLIP/pred.bed"
+		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
+		# "MultiQC/multiqc_report.html",
+		expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
 
 ## FastQC on original (untrimmed) files
 rule runfastqc:
@@ -113,7 +113,7 @@ rule multiqc:
 		"logs/multiqc.log"
 	shell:
 		"echo 'MultiQC version:\n' > {log}; multiqc --version >> {log}; "
-		"multiqc FastQC FASTQtrimmed salmon STAR -f -o MultiQC"
+		"multiqc FastQC FASTQtrimmed STAR -f -o MultiQC"
 
 
 ## ------------------------------------------------------------------------------------ ##
@@ -185,7 +185,7 @@ rule starPE:
 		"echo 'STAR version:\n' > {log}; STAR --version >> {log}; "
 		"STAR --genomeDir {params.STARindex} --readFilesIn {input.fastq1} {input.fastq2} "
 		"--runThreadN {threads} --outFileNamePrefix STAR/{wildcards.sample}/{wildcards.sample}_ "
-		"--outSAMtype BAM SortedByCoordinate --readFilesCommand gunzip -c"
+		"--outSAMtype BAM SortedByCoordinate --readFilesCommand gunzip -c "
 		"--outFilterMismatchNmax 2 --outFilterMultimapNmax 1 "
 		"--outReadsUnmapped Fastx --outSJfilterReads Unique --outSAMattributes NH HI AS nM NM MD"
 
@@ -234,17 +234,56 @@ rule create_annotation_DB:
 		# expand("python {omniCLIP_dir}/data_parsing/CreateGeneAnnotDB.py {input} {output}",
 		# input = input, output = output, omniCLIP_dir = config["omniCLIP_dir"])
 
+## backup
+# rule omniCLIP:
+# 	input:
+# 		anno = config["annotation_DB"],
+# 		genome_dir = os.path.dirname(config["genome_dir"]),
+# 		# genome_dir = "genome_fasta/",
+# 		clip1 = expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",sample =  samples.ID.values[0]),
+# 		clip2 = expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",sample =  samples.ID.values[1]),
+# 		bg1 = config["bg1"],
+# 		bg2 = config["bg2"]
+# 	output:
+# 		"omniCLIP/pred.bed"
+# 	conda:
+# 		"envs/omniCLIP.yaml"
+# 	threads: config["ncores"]
+# 	shell:
+# 		"python " + config["omniCLIP_dir"] +"/omniCLIP.py "
+# 		"--annot {input.anno} --genome-dir {input.genome_dir} "
+# 		"--clip-files {input.clip1} "
+# 		"--clip-files {input.clip2} "
+# 		"--bg-files {input.bg1} --bg-files {input.bg2} "
+# 		"--out-dir omniCLIP/ "
+# 		"--nb-cores {threads} "
+# 		## additional parameters, not used for the first call to the method, only if it crashed after read processing
+		# "--use-precomp-CLIP-data " ### load the fg_reads.dat file
+		# "--use-precomp-bg-data " ## load the bg reads
+		# "--restart-from-iter "
+		# "--use_precomp_diagmod omniCLIP/IterSaveFile.dat"  ## load precomputed parameters from file
+
+
+
+# samples.group[samples.ID == {sample}]
+# lambda wildcards: config["samples"][wildcards.sample]
+
 rule omniCLIP:
 	input:
 		anno = config["annotation_DB"],
 		genome_dir = os.path.dirname(config["genome_dir"]),
 		# genome_dir = "genome_fasta/",
-		clip1 = expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",sample =  samples.ID.values[0]),
-		clip2 = expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",sample =  samples.ID.values[1]),
-		bg1 = config["bg1"],
-		bg2 = config["bg2"]
+		clip1 = "STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",
+		# clip2 = expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",sample =  samples.ID.values[1]),
+		# bg1 = config["Brain"]["bg1"],
+		# bg2 = config["Brain"]["bg2"]
+		#bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample][0] ]["bg2"]
+		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
+		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
+		# bg1 = lambda wildcards: config[samples.group[samples.ID == wildcards.sample]]["bg1"],
+		# bg2 = lambda wildcards: config[samples.group[samples.ID == wildcards.sample]]["bg2"]
 	output:
-		"omniCLIP/pred.bed"
+		"omniCLIP/{sample}/pred.bed"
 	conda:
 		"envs/omniCLIP.yaml"
 	threads: config["ncores"]
@@ -252,12 +291,22 @@ rule omniCLIP:
 		"python " + config["omniCLIP_dir"] +"/omniCLIP.py "
 		"--annot {input.anno} --genome-dir {input.genome_dir} "
 		"--clip-files {input.clip1} "
-		"--clip-files {input.clip2} "
+		# "--clip-files {input.clip2} "
 		"--bg-files {input.bg1} --bg-files {input.bg2} "
-		"--out-dir omniCLIP/ "
+		"--out-dir omniCLIP/{wildcards.sample}/ "
 		"--nb-cores {threads} "
-		## additional parameters, not used for the first call to the method, only if it crashed after read processing
-		"--use-precomp-CLIP-data " ### load the fg_reads.dat file
-		"--use-precomp-bg-data " ## load the bg reads
-		# "--restart-from-iter "
-		# "--use_precomp_diagmod omniCLIP/IterSaveFile.dat"  ## load precomputed parameters from file
+
+
+#
+#
+# rule bowtie2:
+#     input:
+#         bowtie2_inputs,
+#         index=bowtie2_index
+#     output:
+#         sam="{reads}_bowtie2.sam"
+#     run:
+#         if seq_type == "pe":
+#             shell("bowtie2 -x {input.index} -1 {input.forward} -2 {input.reverse} -S {output.sam}")
+#         elif seq_type == "se":
+#             shell("bowtie2 -x {input.index} -U {input.reads} -S {output.sam}")

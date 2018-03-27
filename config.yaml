@@ -41,7 +41,13 @@ omniCLIP_dir: /home/kathi/software/omniCLIP
 annotation_DB: ../clip_Nov2017/annotation/Mus_musculus.GRCm38.90.gtf.db
 
 ## background RNA-seq files
-bg1: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_Homo_S1_R1_Aligned.sortedByCoord.out.bam"
-bg2: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_Homo_S2_1_R1_Aligned.sortedByCoord.out.bam"
+Brain:
+    bg1: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_Homo_S1_R1_Aligned.sortedByCoord.out.bam"
+    bg2: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_Homo_S2_1_R1_Aligned.sortedByCoord.out.bam"
+
+SNS:
+    bg1: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_SNS_S1_R1_Aligned.sortedByCoord.out.bam"
+    bg2: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_SNS_S2_R1_Aligned.sortedByCoord.out.bam"
+
 ## directory with the genome fasta files: 1 file per chromosome, named <chrNR>.fa.gz, e.g. 1.fa.gz
 genome_dir: ../clip_Nov2017/genome_fasta/
