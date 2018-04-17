@@ -22,7 +22,12 @@ rule all:
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
 		# "MultiQC/multiqc_report.html",
-		expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
+		# expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
+		# expand("omniCLIP/{sample}/pred.bed", sample = "SNS_70K")
+		expand("STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam", sample = samples.ID.values.tolist())
+
+
+
 
 ## FastQC on original (untrimmed) files
 rule runfastqc:
@@ -204,6 +209,14 @@ rule staridx:
 
 
 
+rule extract_forward_read_bam:
+	input:
+		bam = "STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam"
+	output:
+		outfile = "STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam"
+	shell:
+		"samtools view -b -f 0x40 {input.bam} > {output.outfile}"
+
 #### read deduplication
 ## peak calling
 ## RNA-seq as background:
@@ -213,7 +226,6 @@ rule staridx:
  #   recommend to trim reads prior to alignment to match CLIP-read lengths in order to increase
  #   the similarity to CLIP-data. In
 ### --> homogenate RNA-seq, riboZero, with replicates
-
 
 
 ## ------------------------------------------------------------------------------------ ##
@@ -272,16 +284,9 @@ rule omniCLIP:
 	input:
 		anno = config["annotation_DB"],
 		genome_dir = os.path.dirname(config["genome_dir"]),
-		# genome_dir = "genome_fasta/",
-		clip1 = "STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",
-		# clip2 = expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",sample =  samples.ID.values[1]),
-		# bg1 = config["Brain"]["bg1"],
-		# bg2 = config["Brain"]["bg2"]
-		#bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample][0] ]["bg2"]
+		clip = "STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",
 		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
 		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
-		# bg1 = lambda wildcards: config[samples.group[samples.ID == wildcards.sample]]["bg1"],
-		# bg2 = lambda wildcards: config[samples.group[samples.ID == wildcards.sample]]["bg2"]
 	output:
 		"omniCLIP/{sample}/pred.bed"
 	conda:
@@ -290,11 +295,12 @@ rule omniCLIP:
 	shell:
 		"python " + config["omniCLIP_dir"] +"/omniCLIP.py "
 		"--annot {input.anno} --genome-dir {input.genome_dir} "
-		"--clip-files {input.clip1} "
-		# "--clip-files {input.clip2} "
+		"--clip-files {input.clip} "
 		"--bg-files {input.bg1} --bg-files {input.bg2} "
 		"--out-dir omniCLIP/{wildcards.sample}/ "
 		"--nb-cores {threads} "
+		# "--restart-from-iter "
+		# "--use_precomp_diagmod omniCLIP/{wildcards.sample}/IterSaveFile.dat"
 
 
 #
