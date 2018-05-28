@@ -11,3 +11,4 @@ logs/
 .snakemake/
 BAM_deduplicated/
 forward_read_only/
+clipper/*.bed
