@@ -51,3 +51,6 @@ SNS:
 
 ## directory with the genome fasta files: 1 file per chromosome, named <chrNR>.fa.gz, e.g. 1.fa.gz
 genome_dir: ../clip_Nov2017/genome_fasta/
+
+## Picard tools executable:
+picard_dir: /home/kathi/software/picard-2.18.4

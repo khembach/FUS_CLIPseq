@@ -23,9 +23,9 @@ rule all:
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
 		# "MultiQC/multiqc_report.html",
 		# expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
-		# expand("omniCLIP/{sample}/pred.bed", sample = "SNS_70K")
-		expand("STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam", sample = samples.ID.values.tolist())
-
+		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "HOMO_70K", group="Brain")
+		# expand("STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam", sample = samples.ID.values.tolist())
+		# expand("BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai", sample = samples.ID.values.tolist())
 
 
 
@@ -150,6 +150,8 @@ rule trimgalorePE:
 		"trim_galore -q 20 --phred33 --length 20 -o FASTQtrimmed --path_to_cutadapt cutadapt "
 		"--paired {input.fastq1} {input.fastq2}"
 
+
+
 ## ------------------------------------------------------------------------------------ ##
 ## STAR mapping
 ## ------------------------------------------------------------------------------------ ##
@@ -217,6 +219,49 @@ rule extract_forward_read_bam:
 	shell:
 		"samtools view -b -f 0x40 {input.bam} > {output.outfile}"
 
+
+rule staridx_forward_reads:
+	input:
+		bam = "STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam"
+	output:
+		"STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam.bai"
+	log:
+		"logs/samtools_index_{sample}.log"
+	shell:
+		"echo 'samtools version:\n' > {log}; samtools --version >> {log}; "
+		"samtools index {input.bam}"
+
+
+
+## ------------------------------------------------------------------------------------ ##
+## PCR duplicate removal
+## ------------------------------------------------------------------------------------ ##
+
+rule remove_PCR_duplicates:
+	input:
+		"STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam"
+	output:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam"
+	shell:
+		"java -jar " + config["picard_dir"] + "/picard.jar MarkDuplicates "
+		"I={input} "
+		"O={output} "
+		"M=BAM_deduplicated/{wildcards.sample}/marked_dup_metrics.txt "
+		"REMOVE_DUPLICATES=true "
+
+### index deduplicated files --> new rule required??
+
+
+## Index bam files
+rule dedupidx:
+	input:
+		bam = "BAM_deduplicated/{sample}/{sample}_deduplicated.bam"
+	output:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai"
+	shell:
+		"samtools index {input.bam}"
+
+
 #### read deduplication
 ## peak calling
 ## RNA-seq as background:
@@ -280,15 +325,18 @@ rule create_annotation_DB:
 # samples.group[samples.ID == {sample}]
 # lambda wildcards: config["samples"][wildcards.sample]
 
+### run omniCLIP on the mapped forward reads
+
 rule omniCLIP:
 	input:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai",
 		anno = config["annotation_DB"],
 		genome_dir = os.path.dirname(config["genome_dir"]),
-		clip = "STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam",
+		clip = "BAM_deduplicated/{sample}/{sample}_deduplicated.bam",
 		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
 		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
 	output:
-		"omniCLIP/{sample}/pred.bed"
+		"omniCLIP/{sample}/{sample}_bg_{group}_pred.bed"
 	conda:
 		"envs/omniCLIP.yaml"
 	threads: config["ncores"]
@@ -299,6 +347,8 @@ rule omniCLIP:
 		"--bg-files {input.bg1} --bg-files {input.bg2} "
 		"--out-dir omniCLIP/{wildcards.sample}/ "
 		"--nb-cores {threads} "
+		"--max-it 10; "
+		"mv omniCLIP/{wildcards.sample}/pred.bed omniCLIP/{wildcards.sample}/{wildcards.sample}_bg_{wildcards.group}_pred.bed"
 		# "--restart-from-iter "
 		# "--use_precomp_diagmod omniCLIP/{wildcards.sample}/IterSaveFile.dat"
 
