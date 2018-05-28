@@ -11,8 +11,8 @@ library(VennDiagram)
 # base_dir <- "/home/Shared_taupo/data/seq/sonu_CLIP/clip_March2018"
 base_dir <- "/Volumes/Shared/data/seq/sonu_CLIPseq/clip_March2018/"
 
-GTF <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
-# GTF <- "/Users/katharina/PhD/data/annotation/Mouse/Mus_musculus.GRCm38.90.gtf"
+# GTF <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+GTF <- "/Users/katharina/PhD/data/annotation/Mouse/Mus_musculus.GRCm38.90.gtf"
 
 magda <- import("/Users/katharina/PhD/Collaborations/Sonu/clip_Nov2017/analysis/peaks/remapped_mm10_TLS_hiseq_notrim_ingenes_clusters_mm950.bed")
 
@@ -515,4 +515,41 @@ ggsave(file.path(base_dir, "analysis", "deduplicated", "RNA_species",
 
 
 
+#########################
+# Export top 1000 peaks #
+#########################
+
+## overlap the peaks with the annotation and save the peak location, score and gene name and maximal height of the peak (max # of reads in peak)
+
+add_gene_annotation <- function(peaks, genes){
+  olap <- findOverlaps(peaks, genes)
+  res <- peaks[queryHits(olap), "score"]
+  mcols(res) <- cbind(mcols(res), mcols(genes[subjectHits(olap), c("gene_id", "gene_name", "gene_biotype")]))
+  res
+}
+
+
+omni_top_anno <- lapply(omni_top, function(x) add_gene_annotation(x, anno[["gene"]]))
+clipper_top_anno <- lapply(clipper_top, function(x) add_gene_annotation(x, anno[["gene"]]))
+
+for(sample in names(clipper_top_anno)){
+  write.table(clipper_top_anno[[sample]], 
+              file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+                 paste0("CLIPper_", sample, "_top1000_peaks.txt")),
+              sep = "\t", row.names = FALSE, quote=FALSE)
+}
+for(sample in names(omni_top_anno)){
+  write.table(omni_top_anno[[sample]], 
+              file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+                 paste0("omniCLIP_", sample, "_top1000_peaks.txt")),
+              sep = "\t", row.names = FALSE, quote=FALSE)
+}
+
+
+# lapply(clipper_top_anno, function(x) unique(x$gene_biotype) )
+# lapply(omni_top_anno, function(x) unique(x$gene_biotype) )
+
+
+
+### TODO: add the number of reads in the max peak
 
