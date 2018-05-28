@@ -30,7 +30,6 @@ for (sample in c("HOMO_70K", "SNS_70K")){
                                       paste0("deduplicated_", sample,"_clipper_peaks.bed")))
 }
 
-
 omni <- list()
 # for (i in 1:nrow(metadat)) {
 for (i in c(1, 3)) {
@@ -38,7 +37,6 @@ for (i in c(1, 3)) {
   omni[[sample]] <- import(file.path(base_dir,"omniCLIP", sample,
                                      paste0(sample,"_bg_", metadat$group[i], "_pred.bed")))
 }
-
 
 ## The original peaks Magda's data were all found in chr1 - X, and not in the patches. 
 ## This is the same for the clipper and omniCLIP peaks
@@ -58,11 +56,16 @@ for (sample in c("HOMO_70K", "SNS_70K")){
 ### read the gene annotations
 gtf <- import(GTF)
 
-
 ## overlap the peaks with the different parts of a gene: gene, exon, intron, five_prime_utr, three_prime_utr
 anno <- split(gtf, mcols(gtf)$type)
 anno <- anno[c("gene", "exon", "five_prime_utr", "three_prime_utr")]
 anno <- lapply(anno, unique)
+
+
+###############################
+## Bar plots of peak location #
+###############################
+
 
 ## Overlap between the peaks and the annotation. Intronic peaks are all peaks 
 ## that overlap with the gene and that do not overlap with exons or 3'/5' UTRs
@@ -141,6 +144,10 @@ ggsave(file.path(base_dir, "analysis","deduplicated", "comparison_old_clip",
                  "barplot_peak_location_percentage.pdf"),
        p, width=7, height =7) 
 
+
+######################
+# Gene scatter plots #
+######################
 
 ## How similar are the top peaks from the two methods?
 df_gene <- data.frame(gene = mcols(anno[["gene"]])$gene_name, 
@@ -226,12 +233,14 @@ ggsave(file.path(base_dir, "analysis", "deduplicated", "comparison_old_clip",
        plot_grid(g1, g2, g3, g4, align = "h"), height=7, width=7)
 
 
+##################
+## Venn diagrams #
+##################
 
 ## do not write log files for the Venn diagrams
 futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
 
 #### get the top genes with the most peaks for each of the methods/ datasets
-
 for(i in c(50, 100, 200)){
   top_omniCLIP_SNS_70K <- df_gene[ order(df_gene$omniCLIP_SNS_70K , decreasing = TRUE), ]$gene[1:i]
   top_omniCLIP_HOMO_70K <- df_gene[ order(df_gene$omniCLIP_HOMO_70K , decreasing = TRUE), ]$gene[1:i]
@@ -279,6 +288,10 @@ export(omni_top[["HOMO_70K"]],  file.path(base_dir,"omniCLIP", "HOMO_70K", paste
 export(clipper_top[["SNS_70K"]],  file.path(base_dir,"clipper", "deduplicated_SNS_70K_clipper_peaks_top1000.bed"))
 export(clipper_top[["HOMO_70K"]],  file.path(base_dir,"clipper", "deduplicated_HOMO_70K_clipper_peaks_top1000.bed"))
 
+
+###############################
+## Bar plots of peak location #
+###############################
 
 ## count peaks that overlap more than one annotation multiple times
 clipper_olap_top <- list()
@@ -341,6 +354,10 @@ ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
        p, width = 7, height = 7) 
 
 
+######################
+# Gene scatter plots #
+######################
+
 df_top_gene <- data.frame(gene = mcols(anno[["gene"]])$gene_name, 
                           omniCLIP_SNS_70K = countOverlaps(anno[["gene"]], omni_top[["SNS_70K"]]),
                           omniCLIP_HOMO_70K = countOverlaps(anno[["gene"]], omni_top[["HOMO_70K"]]),
@@ -391,8 +408,9 @@ ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
        plot_grid( g1, g2,g3, g4, align = "h"), width=7, height = 7)
 
 
-
-## Venn diagrams
+##################
+## Venn diagrams #
+##################
 
 for(i in c(50, 100, 200)){
   top_omniCLIP_SNS_70K <- df_top_gene[ order(df_top_gene$omniCLIP_SNS_70K , decreasing = TRUE), ]$gene[1:i]
@@ -424,9 +442,9 @@ intersect(top_omniCLIP_HOMO_70K, top_CLIPper_SNS_70K)
 
 
 
-#################
-## Where are the peaks located, what types of RNA are bound? 
-#################
+#########################
+## RNA species bar plot #
+#########################
 
 gtf_gene <- gtf[ mcols(gtf)$type == "gene" ]
 gtf_gene <- gtf[ mcols(gtf)$gene_biotype %in% c("snRNA", "protein_coding",
@@ -494,5 +512,7 @@ p
 ggsave(file.path(base_dir, "analysis", "deduplicated", "RNA_species",
                  "barplot_read_distribution_RNA_species.pdf"),
        p, height = 7, width=10) 
+
+
 
 
