@@ -14,3 +14,4 @@ forward_read_only/
 clipper/*.bed
 analysis/
 igv_session_*.xml
+clipper/clipper_warnings.txt
