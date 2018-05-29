@@ -534,22 +534,55 @@ clipper_top_anno <- lapply(clipper_top, function(x) add_gene_annotation(x, anno[
 
 for(sample in names(clipper_top_anno)){
   write.table(clipper_top_anno[[sample]], 
-              file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+              file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists",
                  paste0("CLIPper_", sample, "_top1000_peaks.txt")),
               sep = "\t", row.names = FALSE, quote=FALSE)
 }
 for(sample in names(omni_top_anno)){
   write.table(omni_top_anno[[sample]], 
-              file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+              file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists",
                  paste0("omniCLIP_", sample, "_top1000_peaks.txt")),
               sep = "\t", row.names = FALSE, quote=FALSE)
 }
 
 
-# lapply(clipper_top_anno, function(x) unique(x$gene_biotype) )
-# lapply(omni_top_anno, function(x) unique(x$gene_biotype) )
-
-
+# lapply(clipper_top_anno, function(x) unique(x$gene_name) )
+# lapply(omni_top_anno, function(x) unique(x$gene_name) )
 
 ### TODO: add the number of reads in the max peak
+
+
+
+#### Which peaks on specific for the SNS sample? That means, there is no peak at the same location in the homogenate sample.
+# clipper_top_specific_top <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clipper_top_anno[["HOMO_70K"]], invert = TRUE)
+# omni_top_specific_top <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni_top_anno[["HOMO_70K"]], invert = TRUE)
+# 
+# clipper_top_specific_all <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clipper[["HOMO_70K"]], invert = TRUE)
+# omni_top_specific_all <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni[["HOMO_70K"]], invert = TRUE)
+
+
+write.table(subsetByOverlaps(clipper_top_anno[["SNS_70K"]],
+                             clipper_top_anno[["HOMO_70K"]], invert = TRUE), 
+            file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
+                      paste0("CLIPper_SNS_top1000_peaks_specific_top_homogenate.txt")), 
+            sep = "\t", row.names = FALSE, quote=FALSE)
+
+write.table(subsetByOverlaps(clipper_top_anno[["SNS_70K"]],
+                             clipper[["HOMO_70K"]], invert = TRUE), 
+            file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
+                      paste0("CLIPper_SNS_top1000_peaks_specific_all_homogenate.txt")), 
+            sep = "\t", row.names = FALSE, quote=FALSE)
+
+write.table(subsetByOverlaps(omni_top_anno[["SNS_70K"]], 
+                             omni_top_anno[["HOMO_70K"]], invert = TRUE), 
+            file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
+                      paste0("omniCLIP_SNS_top1000_peaks_specific_top_homogenate.txt")), 
+            sep = "\t", row.names = FALSE, quote=FALSE)
+
+write.table(subsetByOverlaps(omni_top_anno[["SNS_70K"]], 
+                             omni[["HOMO_70K"]], invert = TRUE), 
+            file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
+                      paste0("omniCLIP_SNS_top1000_peaks_specific_all_homogenate.txt")), 
+            sep = "\t", row.names = FALSE, quote=FALSE)
+
 
