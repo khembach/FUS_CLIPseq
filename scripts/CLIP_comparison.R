@@ -277,6 +277,23 @@ intersect(top_omniCLIP_HOMO_70K, top_CLIPper_SNS_70K)
 ## only analyse the top X peaks from each method ##
 ###################################################
 
+## We only use the top peaks with the best score, because we believe that we have
+## some contamination from the nucleus in our SNS samples. The number of intronic
+## reads is nearly the same as in the homogenate sample, even though the SNS should
+## be enriched for mature RNAs that do not contain introns anymore. 
+## By looking at the read distribution, we saw that more reads are located in exons
+## in the SNS sample and thus there must be some enrichment for synaptic RNAs.
+## We hope that the peaks with high confidence are the true ones (located in exons 
+## or UTRs) and that the intronic peaks have much lower confidence.
+
+## How are the scores computed in omniCLIP and CLIPper?
+## omniCLIP Bonferroni corrected p-value ≤ 0.05: The scores for a peak are computed as the log-likelihood ratio of the
+## peak state versus the other states in NHMM at the peak location.
+## CLIPper: p-value:
+## define all of our peaks' significance based on the number of reads within a peak,
+## relative to the number of other reads on a gene and the length of that gene.
+## First for each gene we calculate the false-discovery rate threshold (FDR), which is the "height" of reads mapped at a single genomic position that is likely to be noise, determined by randomly scattering the same number of faux reads as real reads across a faux transcript that is the same effective length as the real transcript.
+
 
 ## Select the top 1000 peaks in all samples:
 topn <- 1000
@@ -554,11 +571,11 @@ for(sample in names(omni_top_anno)){
 
 
 #### Which peaks on specific for the SNS sample? That means, there is no peak at the same location in the homogenate sample.
-# clipper_top_specific_top <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clipper_top_anno[["HOMO_70K"]], invert = TRUE)
-# omni_top_specific_top <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni_top_anno[["HOMO_70K"]], invert = TRUE)
-# 
-# clipper_top_specific_all <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clipper[["HOMO_70K"]], invert = TRUE)
-# omni_top_specific_all <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni[["HOMO_70K"]], invert = TRUE)
+clipper_top_specific_top <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clipper_top_anno[["HOMO_70K"]], invert = TRUE)
+omni_top_specific_top <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni_top_anno[["HOMO_70K"]], invert = TRUE)
+
+clipper_top_specific_all <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clipper[["HOMO_70K"]], invert = TRUE)
+omni_top_specific_all <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni[["HOMO_70K"]], invert = TRUE)
 
 
 write.table(subsetByOverlaps(clipper_top_anno[["SNS_70K"]],
@@ -584,5 +601,19 @@ write.table(subsetByOverlaps(omni_top_anno[["SNS_70K"]],
             file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
                       paste0("omniCLIP_SNS_top1000_peaks_specific_all_homogenate.txt")), 
             sep = "\t", row.names = FALSE, quote=FALSE)
+
+### number of unique genes per list
+lapply(omni_top_anno, function(x) length(unique(x$gene_name)))
+# SNS: 943, HOMO: 808
+lapply(clipper_top_anno, function(x) length(unique(x$gene_name)))
+# SNS: 189, HOMO: 167
+
+length(unique(omni_top_specific_top$gene_name)) # 942
+length(unique(omni_top_specific_all$gene_name)) # 676
+
+length(unique(clipper_top_specific_top$gene_name)) # 171
+length(unique(clipper_top_specific_all$gene_name)) # 25
+
+
 
 
