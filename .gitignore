@@ -15,3 +15,4 @@ clipper/*.bed
 analysis/
 igv_session_*.xml
 clipper/clipper_warnings.txt
+IGV_sonu*
