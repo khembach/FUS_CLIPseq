@@ -75,7 +75,11 @@ ga <- readGAlignmentPairs(bf)
 
 clipper[[sample]]$read_count <- countOverlaps(clipper[[sample]], ga, ignore.strand=TRUE)
 
-counts_per_gene <- data.frame(gene = sns_genes$gene_id, exon = 0, five_prime_utr = 0, three_prime_utr = 0, intron = 0)
+counts_per_gene <- data.frame(gene = sns_genes$gene_id, 
+                              exon = 0, 
+                              five_prime_utr = 0, 
+                              three_prime_utr = 0, 
+                              intron = 0)
 for (g in 1:length(sns_genes)){
   peaks <- subsetByOverlaps(clipper[[sample]], sns_genes[g])
   a <- gtf_gene_anno[gtf_gene_anno$gene_id == sns_genes[g]$gene_id] 
@@ -91,7 +95,12 @@ for (g in 1:length(sns_genes)){
   }
 }
 
-counts_per_gene_mean <- data.frame(gene_id = sns_genes$gene_id, gene_name = sns_genes$gene_name, exon = 0, five_prime_utr = 0, three_prime_utr = 0, intron = 0)
+counts_per_gene_mean <- data.frame(gene_id = sns_genes$gene_id, 
+                                   gene_name = sns_genes$gene_name, 
+                                   exon = 0, 
+                                   five_prime_utr = 0, 
+                                   three_prime_utr = 0, 
+                                   intron = 0)
 for (g in 1:length(sns_genes)){
   peaks <- subsetByOverlaps(clipper[[sample]], sns_genes[g])
   a <- gtf_gene_anno[gtf_gene_anno$gene_id == sns_genes[g]$gene_id] 
@@ -112,7 +121,10 @@ counts_per_gene_mean[is.nan(counts_per_gene_mean$three_prime_utr),"three_prime_u
 counts_per_gene_mean[is.nan(counts_per_gene_mean$five_prime_utr),"five_prime_utr"] <- 0
 counts_per_gene_mean[is.nan(counts_per_gene_mean$intron),"intron"] <- 0
 
-write.table(counts_per_gene_mean, file = file.path(base_dir, "analysis", "deduplicated", "top_peaks", "read_counts_per_gene_mean.txt"), sep = "\t", quote=FALSE, row.names = FALSE )
+write.table(counts_per_gene_mean, file = file.path(base_dir, "analysis", 
+                                                   "deduplicated", "top_peaks", 
+                                                   "read_counts_per_gene_mean.txt"), 
+            sep = "\t", quote=FALSE, row.names = FALSE )
 
 
 # Plot the number of reads in exonic and 5'UTR peaks
@@ -209,7 +221,8 @@ for (sample in c("HOMO_70K", "SNS_70K")){
 
 clipper_all[[sample]]$read_count <- countOverlaps(clipper_all[[sample]], ga, ignore.strand=TRUE)
 # annotate the gene per peak
-clipper_all[[sample]]$gene_id <- str_split(clipper_all[[sample]]$name, pattern = "_", simplify = TRUE)[,1]
+clipper_all[[sample]]$gene_id <- str_split(clipper_all[[sample]]$name, 
+                                           pattern = "_", simplify = TRUE)[,1]
 
 
 ## mark the top 1000 peaks so that we can highlight these genes in the plots
@@ -225,9 +238,13 @@ gene_peak_count <- as.data.frame(mcols(clipper_all[[sample]])) %>%
 
 ## Table with gene name, sum of reads in all clipper peaks in gene, gene TPM
 gene_expr <- data.frame(gene_id = rownames(tpms), 
-                        peak_counts = gene_peak_count[match(rownames(tpms), gene_peak_count$gene_id), "peaks_read_count"],
+                        peak_counts = gene_peak_count[match(rownames(tpms), 
+                                                            gene_peak_count$gene_id), 
+                                                      "peaks_read_count"],
                         tpm = tpms[, "20170214.B-WT_SNS_S1_R1"], 
-                        top1000_peak = gene_peak_count[match(rownames(tpms), gene_peak_count$gene_id), "top1000_peak"])
+                        top1000_peak = gene_peak_count[match(rownames(tpms),
+                                                             gene_peak_count$gene_id), 
+                                                       "top1000_peak"])
 
 # remove the genes with not peaks
 gene_expr <-gene_expr[ ! is.na(gene_expr$peaks_read_count),]
@@ -285,3 +302,7 @@ p <- ggplot(gene_expr[ gene_expr$tpm > 1 ,], aes(x = top1000_peak, y = tpm )) +
 ggsave(file.path(base_dir, "analysis", "deduplicated", "quality_control",
                  "boxplot_gene_tpm_greater1.pdf"),
        p, width = 5, height = 5) 
+
+
+## TODO: look at the homogenate sample!
+# Does it show the same as the SNS sample?
