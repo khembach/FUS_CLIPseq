@@ -100,6 +100,20 @@ for(sample in c("HOMO_70K", "SNS_70K")){
   }
 }
 
+## Write BED files with the peaks
+for(sample in c("SNS_70K")){
+  for (a in c("exon", "three_prime_utr")){
+    export( peaks_anno_top[[sample]][[a]],
+            con = file.path(base_dir,"analysis", "deduplicated", "peaks_bed",
+                            paste0(sample, "_clipper_top_",
+                                   length(peaks_anno_top[[sample]][[a]]),
+                                   "_peaks_", a,".bed")),
+            format = "bed")
+  }
+}
+
+
+
 
 ## Remove all short sequences for RNAcontest and write the sequence to one line
 for(sample in c("HOMO_70K", "SNS_70K")){
@@ -140,7 +154,7 @@ median_peak_length <- median(width(peaks_anno[["SNS_70K"]]$exon))
 
 ## function to simulate background peaks with the median peak length in a 
 ## specific annotation type, not overlapping with any predicted peaks.
-generate_bg_seq <- function(anno_type, anno, peaks, n_bg_seqs, median_peak_length){
+generate_bg_seq <- function(anno_type, anno, peaks, n_bg_seqs, median_peak_length, type = "bed", genome = genome){
   # get all regions of the same type without any of the homogenate or SNS peaks
   bg_region <- subsetByOverlaps(anno, peaks, invert = TRUE)
   # remove mitochondrial genome, patches and haplotypes
@@ -161,26 +175,42 @@ generate_bg_seq <- function(anno_type, anno, peaks, n_bg_seqs, median_peak_lengt
                                     end = starts + median_peak_length -1),
                    strand = strand(bg_region))
   
-  bg_seq <- getSeq(genome, bg_gr)
-  export(bg_seq, 
-         con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta",
-                         paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, ".fasta")))
-  
+  if (type == "fasta"){
+    bg_seq <- getSeq(genome, bg_gr)
+    export(bg_seq, 
+           con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta",
+                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, ".fasta")))
+  } else if (type == "bed"){
+    export(bg_gr, 
+           con = file.path(base_dir, "analysis", "deduplicated", "peaks_bed",
+                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, ".bed")))
+  } else {
+    print(paste0("type ", type, " unknown! Please pick one of fasta or bed."))
+  }
 }
 
 
 generate_bg_seq("exon", anno[["exon"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                1000, median_peak_length)
+                1000, median_peak_length, "fasta")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                1000, median_peak_length)
+                1000, median_peak_length, "fasta")
 generate_bg_seq("exon", anno[["exon"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                200000, median_peak_length)
+                200000, median_peak_length, "fasta")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                200000, median_peak_length)
+                200000, median_peak_length, "fasta")
+
+## bg in bed format
+generate_bg_seq("exon", anno[["exon"]], 
+                c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
+                1000, median_peak_length, "bed")
+generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
+                c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
+                1000, median_peak_length, "bed")
+
 
 
 
@@ -312,4 +342,50 @@ ggsave(file.path(base_dir, "analysis", "deduplicated", "relative_peak_position",
 
 ## Do we have so many peaks starting at the exon/3'UTR start because of the STAR mapping and soft-clipping?
 ## Or because of CliPper and the exon annotation? 
+
+
+
+
+###############################
+# Selected top residual peaks #
+###############################
+
+peaks_resid <- import(file.path(base_dir, "analysis", "deduplicated", "selected_peaks", 
+                                paste0("deduplicated_", sample, "_clipper_peaks_top1000_selected_residual.bed")))
+peaks_resid_seq <- getSeq(genome, peaks_resid)
+export(peaks_resid_seq, con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta", "SNS_70K_clipper_top1000_peaks_residual.fasta"), format = "fasta")
+
+## seperate the peaks according to exon and 3'UTR
+
+peaks_anno_resid <- list()
+sample <- "SNS_70K"
+peaks_anno_resid[[sample]] <- lapply(anno, function(x)
+  subsetByOverlaps(peaks_resid, x, type = "any") )
+names(peaks_anno_resid[[sample]]) <- names(anno)
+peaks_anno_resid[[sample]][["intron"]] <- subsetByOverlaps(peaks_resid, anno_intron_inv, invert = TRUE)
+
+
+## Extract the genomic sequences of all peaks
+for (a in c("exon", "three_prime_utr")){
+  print(a)
+  export( getSeq(genome, peaks_anno_resid[[sample]][[a]]),
+          con = file.path(base_dir,"analysis", "deduplicated", "peaks_fasta",
+                          paste0(sample, "_clipper_top_",
+                                 length(peaks_anno_resid[[sample]][[a]]),
+                                 "_peaks_residual_", a,".fasta")),
+          format = "fasta")
+}
+
+## Remove all short sequences for RNAcontext and write the sequence to one line
+for (a in c("exon", "three_prime_utr")){
+  print(a)
+  seqs <- getSeq(genome, peaks_anno_resid[[sample]][[a]])
+  seqs <- seqs[width(seqs)>=8]
+  writeXStringSet(x = , seqs,
+                  filepath = file.path(base_dir,"analysis", "deduplicated", "peaks_fasta", 
+                                       paste0(sample, "_clipper_top_", 
+                                              length(seqs), 
+                                              "_peaks_residual_", a,"_min8.fasta")),
+                  width = max(width(seqs)))
+}
 
