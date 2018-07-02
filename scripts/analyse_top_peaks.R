@@ -56,7 +56,7 @@ ga <- readGAlignmentPairs(bf)
 clipper[[sample]]$read_count <- countOverlaps(clipper[[sample]], ga, ignore.strand=TRUE)
 
 counts_per_gene <- data.frame(gene = sns_genes$gene_id, 
-                              exon = 0, 
+                              exon = 0,
                               five_prime_utr = 0, 
                               three_prime_utr = 0, 
                               intron = 0)
@@ -75,32 +75,39 @@ for (g in 1:length(sns_genes)){
   }
 }
 
+
+## Mean # reads of all peaks in gene
 counts_per_gene_mean <- data.frame(gene_id = sns_genes$gene_id, 
                                    gene_name = sns_genes$gene_name, 
                                    biotype = sns_genes$gene_biotype,
                                    exon = 0, 
+                                   n_peaks_exon = 0,
                                    five_prime_utr = 0, 
+                                   n_peaks_five_prime_utr = 0,
                                    three_prime_utr = 0, 
-                                   intron = 0)
+                                   n_peaks_three_prime_utr = 0,
+                                   intron = 0,
+                                   n_peaks_intron = 0)
 for (g in 1:length(sns_genes)){
   peaks <- subsetByOverlaps(clipper[[sample]], sns_genes[g])
   a <- gtf_gene_anno[gtf_gene_anno$gene_id == sns_genes[g]$gene_id] 
   peaks_intron <- subsetByOverlaps(peaks, a, invert = TRUE)
   if(length(peaks_intron)>0){  # intronic peaks
     counts_per_gene_mean[g, "intron"] <- round(mean(peaks_intron$read_count), 1)
+    counts_per_gene_mean[g, "n_peaks_intron"] <- length(peaks_intron)
+    
   }
-  
   a <- split(a, factor(mcols(a)$type) )
   for(i in names(a)){
     p <- subsetByOverlaps(peaks, a[[i]])
-    counts_per_gene_mean[g,i] <- round( mean(p$read_count), 1)
+    if(length(p)>0){
+      counts_per_gene_mean[g,i] <- round( mean(p$read_count), 1)
+      
+      colind <- which( colnames(counts_per_gene_mean) == i ) + 1
+      counts_per_gene_mean[g,colind] <- length(p)
+    }
   }
 }
-
-counts_per_gene_mean[is.nan(counts_per_gene_mean$exon),"exon"] <- 0
-counts_per_gene_mean[is.nan(counts_per_gene_mean$three_prime_utr),"three_prime_utr"] <- 0
-counts_per_gene_mean[is.nan(counts_per_gene_mean$five_prime_utr),"five_prime_utr"] <- 0
-counts_per_gene_mean[is.nan(counts_per_gene_mean$intron),"intron"] <- 0
 
 
 # Plot the number of reads in exonic and 5'UTR peaks
@@ -185,7 +192,7 @@ counts_per_gene_mean <- counts_per_gene_mean[ order(counts_per_gene_mean$exon,
 
 write.table(counts_per_gene_mean, file = file.path(base_dir, "analysis", 
                                                    "deduplicated", "top_peaks", 
-                                                   paste0(sample, "_read_counts_per_gene_mean.txt")), 
+                                                   paste0(sample, "_read_counts_per_gene_mean_n_peaks.txt")), 
             sep = "\t", quote=FALSE, row.names = FALSE )
 
 
