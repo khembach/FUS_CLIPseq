@@ -55,6 +55,12 @@ windows[[sample]] <- clipper[[sample]]
 start(windows[[sample]]) <- windows[[sample]]$peak_center - win_size
 end(windows[[sample]]) <- windows[[sample]]$peak_center + win_size
 
+export( windows[[sample]],
+        con = file.path(base_dir,"analysis", "deduplicated", "peak_center_window",
+                        paste0(sample, "_clipper_top_",
+                               length(windows[[sample]]),
+                               "_peaks_window", 2*win_size, ".bed")),
+        format = "bed")
 
 ## seperate the peaks according to annotation
 gtf <- import(GTF)
