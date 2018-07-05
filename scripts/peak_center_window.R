@@ -113,4 +113,29 @@ for (a in c("exon", "three_prime_utr")){
 }
 
 
+#########
+######### all CLIPper peaks
+clipper <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  clipper[[sample]] <- import(file.path(base_dir,"clipper",
+                                        paste0("deduplicated_", sample,"_clipper_peaks.bed")))
+}
+seqlevels(clipper[[sample]]) <- gsub("chr", "", seqlevels(clipper[[sample]]))
+
+## we take the median of all positions with the max coverage as the center
+clipper[[sample]]$peak_center <- start(clipper[[sample]]) + 
+  median(which(cov[ clipper[[sample]] ] == max(cov[ clipper[[sample]] ]))) -1
+
+## window 
+windows <- list()
+windows[[sample]] <- clipper[[sample]]
+start(windows[[sample]]) <- windows[[sample]]$peak_center - win_size
+end(windows[[sample]]) <- windows[[sample]]$peak_center + win_size
+
+export( windows[[sample]],
+        con = file.path(base_dir,"analysis", "deduplicated", "peak_center_window",
+                        paste0(sample, "_clipper_peaks_window", 2*win_size, ".bed")),
+        format = "bed")
+
+
 
