@@ -24,12 +24,12 @@ source activate sshmm_env
 
 GENOME=/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/genome/Mus_musculus.GRCm38.dna.primary_assembly.fa
 
-for a in exon three_prime_utr
-do
-  INPUT=../analysis/deduplicated/peaks_bed/SNS_70K_clipper_top_*_peaks_${a}.bed
-  echo $INPUT
-  preprocess_dataset ../analysis/deduplicated/ssHMM/ SNS_70K_${a} $INPUT $GENOME ../reference/GRCm38_chromosome_size.txt --min_length 2 --max_length 100
-done
+# for a in exon three_prime_utr
+# do
+#   INPUT=../analysis/deduplicated/peaks_bed/SNS_70K_clipper_top_*_peaks_${a}.bed
+#   echo $INPUT
+#   preprocess_dataset ../analysis/deduplicated/ssHMM/ SNS_70K_${a} $INPUT $GENOME ../reference/GRCm38_chromosome_size.txt --min_length 2 --max_length 100
+# done
 
 
 ### Training the HMM
@@ -39,33 +39,58 @@ done
 ## Such a heuristic prefers the higher motif length n + 1 over the lower motif length n only if the average information content i_n+1 of its resulting trained model is no more than 0.15 less than for the shorter motif.
 
 
+# for a in exon three_prime_utr
+# do
+#   for l in 3 4 5 6
+#   do
+#     ## use RNAshapes
+#     mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_shapes
+#     train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}/positive.fasta ../analysis/deduplicated/ssHMM/shapes/SNS_70K_${a}/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_shapes --job_name ssHMM_SNS_70K_${a}_len${l}
+
+#     ## and RNAstructures
+#     mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_structures
+#     train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}/positive.fasta ../analysis/deduplicated/ssHMM/structures/SNS_70K_${a}/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_structures --job_name ssHMM_SNS_70K_${a}_len${l}
+
+#   done
+# done
+
+
+
+
+# ### Window 40  ######
+
+# SNS_70K_clipper_top_*_peaks_exon_window40.bed
+
+# for a in exon three_prime_utr
+# do
+#   INPUT=../analysis/deduplicated/peak_center_window/SNS_70K_clipper_top_*_peaks_${a}_window40.bed
+#   echo $INPUT
+#   preprocess_dataset ../analysis/deduplicated/ssHMM/ SNS_70K_${a}_window40 $INPUT $GENOME ../reference/GRCm38_chromosome_size.txt --min_length 2 --max_length 100
+# done
+
+# for a in exon three_prime_utr
+# do
+#   for l in 3 4 5 6
+#   do
+#     ## use RNAshapes
+#     mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_shapes
+#     train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}_window40/positive.fasta ../analysis/deduplicated/ssHMM/shapes/SNS_70K_${a}_window40/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_shapes --job_name ssHMM_SNS_70K_${a}_window40_len${l}
+
+#     ## and RNAstructures
+#      mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_structures
+#     train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}_window40/positive.fasta ../analysis/deduplicated/ssHMM/structures/SNS_70K_${a}_window40/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_structures --job_name ssHMM_SNS_70K_${a}_window40_len${l}
+
+#   done
+# done
+
+
+### Window 40, top 2000 peaks  ######
+
 for a in exon three_prime_utr
 do
-  for l in 3 4 5 6
-  do
-    ## use RNAshapes
-    mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_shapes
-    train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}/positive.fasta ../analysis/deduplicated/ssHMM/shapes/SNS_70K_${a}/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_shapes --job_name ssHMM_SNS_70K_${a}_len${l}
-
-    ## and RNAstructures
-    mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_structures
-    train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}/positive.fasta ../analysis/deduplicated/ssHMM/structures/SNS_70K_${a}/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_len${l}_structures --job_name ssHMM_SNS_70K_${a}_len${l}
-
-  done
-done
-
-
-
-
-### Window 40  ######
-
-SNS_70K_clipper_top_*_peaks_exon_window40.bed
-
-for a in exon three_prime_utr
-do
-  INPUT=../analysis/deduplicated/peak_center_window/SNS_70K_clipper_top_*_peaks_${a}_window40.bed
+  INPUT=../analysis/deduplicated/peak_center_window/SNS_70K_clipper_top2k_*_peaks_${a}_window40.bed
   echo $INPUT
-  preprocess_dataset ../analysis/deduplicated/ssHMM/ SNS_70K_${a}_window40 $INPUT $GENOME ../reference/GRCm38_chromosome_size.txt --min_length 2 --max_length 100
+  preprocess_dataset ../analysis/deduplicated/ssHMM/ SNS_70K_top2k_${a}_window40 $INPUT $GENOME ../reference/GRCm38_chromosome_size.txt --min_length 2 --max_length 100
 done
 
 for a in exon three_prime_utr
@@ -73,16 +98,15 @@ do
   for l in 3 4 5 6
   do
     ## use RNAshapes
-    mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_shapes
-    train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}_window40/positive.fasta ../analysis/deduplicated/ssHMM/shapes/SNS_70K_${a}_window40/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_shapes --job_name ssHMM_SNS_70K_${a}_window40_len${l}
+    mkdir ../analysis/deduplicated/ssHMM/results/top2k/SNS_70K_top2k_${a}_window40_len${l}_shapes
+    train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_top2k_${a}_window40/positive.fasta ../analysis/deduplicated/ssHMM/shapes/SNS_70K_top2k_${a}_window40/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/top2k/SNS_70K_top2k_${a}_window40_len${l}_shapes --job_name ssHMM_SNS_70K_top2k_${a}_window40_len${l}
 
     ## and RNAstructures
-     mkdir ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_structures
-    train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_${a}_window40/positive.fasta ../analysis/deduplicated/ssHMM/structures/SNS_70K_${a}_window40/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/SNS_70K_${a}_window40_len${l}_structures --job_name ssHMM_SNS_70K_${a}_window40_len${l}
+     mkdir ../analysis/deduplicated/ssHMM/results/top2k/SNS_70K_top2k_${a}_window40_len${l}_structures
+    train_seqstructhmm ../analysis/deduplicated/ssHMM/fasta/SNS_70K_top2k_${a}_window40/positive.fasta ../analysis/deduplicated/ssHMM/structures/SNS_70K_top2k_${a}_window40/positive.txt --motif_length ${l} --output_directory ../analysis/deduplicated/ssHMM/results/top2k/SNS_70K_top2k_${a}_window40_len${l}_structures --job_name ssHMM_SNS_70K_top2k_${a}_window40_len${l}
 
   done
 done
-
 
 
 
