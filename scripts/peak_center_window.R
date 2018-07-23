@@ -138,4 +138,43 @@ export( windows[[sample]],
         format = "bed")
 
 
+###################
+### top 2000 peaks:
+##################
+windows_2k <- windows[[sample]][order(windows[[sample]]$score, decreasing = FALSE) ][1:2000]
 
+export(windows_2k,
+       con = file.path(base_dir,"analysis", "deduplicated", "peak_center_window",
+                       paste0(sample, "_clipper_top2000_peaks_window", 2*win_size, ".bed")),
+       format = "bed")
+
+## write BED and fasta file for exon and 3'UTR
+peaks_anno_top2k <- list()
+peaks_anno_top2k[[sample]] <- lapply(anno, function(x)
+  subsetByOverlaps(windows_2k, x, type = "any") )
+names(peaks_anno_top2k[[sample]]) <- names(anno)
+peaks_anno_top2k[[sample]][["intron"]] <- subsetByOverlaps(windows_2k, anno_intron_inv, invert = TRUE)
+
+## write BED files with the peak windows
+for (a in c("exon", "three_prime_utr")){
+  export( peaks_anno_top2k[[sample]][[a]],
+          con = file.path(base_dir,"analysis", "deduplicated", "peak_center_window",
+                          paste0(sample, "_clipper_top2k_",
+                                 length(peaks_anno_top2k[[sample]][[a]]),
+                                 "_peaks_", a,"_window", 2*win_size, ".bed")),
+          format = "bed")
+}
+
+## write FASTA file
+genome <- BSgenome.Mmusculus.UCSC.mm10
+## conver the genome to Ensmble chromosome names
+seqnames(genome) <- gsub("chr", "", seqnames(genome) )
+
+for (a in c("exon", "three_prime_utr")){
+  export( getSeq(genome, peaks_anno_top2k[[sample]][[a]]),
+          con = file.path(base_dir,"analysis", "deduplicated", "peak_center_window",
+                          paste0(sample, "_clipper_top2k_",
+                                 length(peaks_anno_top2k[[sample]][[a]]),
+                                 "_peaks_", a,"_window", 2*win_size, ".fasta")),
+          format = "fasta")
+}
