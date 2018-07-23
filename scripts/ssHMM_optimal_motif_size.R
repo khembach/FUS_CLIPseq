@@ -32,3 +32,27 @@ best_3utr_structures <- n[ best_motif_length_heuristic(n, i_3utr_structures) ]
 ## motif length 3
 
 
+####################################
+### Window 40, top 2000 peaks  #####
+i_exon_shapes <- c(2.2419685064, 1.67247068764, 1.39518968562, 1.22320149835 )
+i_exon_structures <- c(2.38450526297, 1.83248759846, 1.56983234934, 1.31570302951)
+
+
+i_3utr_shapes <- c(2.38776509766, 1.85133743724, 1.40896716392,1.38529213941 )
+i_3utr_structures <- c(2.38662657245, 1.8909993748, 1.56801915811, 1.34535154936)
+
+
+## n: motif length
+## i: average information content
+best_motif_length_heuristic <- function(n, i){
+  which.max(i + n*0.15)
+}
+
+
+best_exon_shapes <- n[ best_motif_length_heuristic(n, i_exon_shapes) ]
+best_exon_structures <- n[ best_motif_length_heuristic(n, i_exon_structures) ]
+### motif length 3 for both shapes and structures, but structures has the overlall higher information content
+
+best_3utr_shapes <- n[ best_motif_length_heuristic(n, i_3utr_shapes) ]
+best_3utr_structures <- n[ best_motif_length_heuristic(n, i_3utr_structures) ]
+## motif length 3
