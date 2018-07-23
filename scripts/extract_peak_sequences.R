@@ -2,6 +2,7 @@
 ## The sequences are required for motif discovery.
 
 library(BSgenome.Mmusculus.UCSC.mm10)
+library(GenomicAlignments)
 library(stringr)
 library(ggplot2)
 
@@ -154,9 +155,12 @@ median_peak_length <- median(width(peaks_anno[["SNS_70K"]]$exon))
 
 ## function to simulate background peaks with the median peak length in a 
 ## specific annotation type, not overlapping with any predicted peaks.
-generate_bg_seq <- function(anno_type, anno, peaks, n_bg_seqs, median_peak_length, type = "bed", genome = genome){
-  # get all regions of the same type without any of the homogenate or SNS peaks
-  bg_region <- subsetByOverlaps(anno, peaks, invert = TRUE)
+generate_bg_seq <- function(anno_type, anno, peaks=NULL, coverage=NULL, n_bg_seqs, median_peak_length, type = "bed", genome_seq = genome, suffix = ""){
+  if ( !is.null(peaks) ){  # all regions of the same type without peaks
+    bg_region <- subsetByOverlaps(anno, peaks, invert = TRUE)
+  } else if( !is.null(coverage) ){  # all regions without any reads
+    bg_region <- anno[ which( sum(coverage[anno]) == 0 ) ]
+  }
   # remove mitochondrial genome, patches and haplotypes
   bg_region <- bg_region[ seqnames(bg_region) %in% c("X", "Y", as.character(1:19) ) ]
   seqlevels(bg_region) <- seqlevelsInUse(bg_region)  # drop unused levels
@@ -176,14 +180,22 @@ generate_bg_seq <- function(anno_type, anno, peaks, n_bg_seqs, median_peak_lengt
                    strand = strand(bg_region))
   
   if (type == "fasta"){
-    bg_seq <- getSeq(genome, bg_gr)
+    bg_seq <- getSeq(genome_seq, bg_gr)
     export(bg_seq, 
            con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta",
-                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, ".fasta")))
+                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, suffix, ".fasta")))
   } else if (type == "bed"){
     export(bg_gr, 
            con = file.path(base_dir, "analysis", "deduplicated", "peaks_bed",
-                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, ".bed")))
+                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs,suffix, ".bed")))
+  } else if (type == "both"){
+    bg_seq <- getSeq(genome_seq, bg_gr)
+    export(bg_seq, 
+           con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta",
+                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, suffix, ".fasta")))
+    export(bg_gr, 
+           con = file.path(base_dir, "analysis", "deduplicated", "peaks_bed",
+                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs,suffix, ".bed")))
   } else {
     print(paste0("type ", type, " unknown! Please pick one of fasta or bed."))
   }
@@ -388,4 +400,51 @@ for (a in c("exon", "three_prime_utr")){
                                               "_peaks_residual_", a,"_min8.fasta")),
                   width = max(width(seqs)))
 }
+
+
+
+
+##############################
+## bg for peak center window:
+## length 41
+###############################
+
+## genome coverage 
+sample <- "SNS_70K"
+ga <- readGAlignmentPairs(file.path(base_dir,"BAM_deduplicated", sample, 
+                                    paste0(sample, "_deduplicated.bam")))
+cov <- coverage(ga)
+rm(ga)
+gc()
+
+generate_bg_seq("exon", anno[["exon"]], 
+                coverage = cov, n_bg_seqs= 1000, median_peak_length = 41, 
+                type= "fasta", suffix = "_0reads_window40")
+generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
+                coverage = cov, n_bg_seqs=1000, median_peak_length=41, 
+                type = "fasta", suffix = "_0reads_window40")
+generate_bg_seq("exon", anno[["exon"]], 
+                coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
+                type="fasta", suffix = "_0reads_window40")
+generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
+                coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
+                type="fasta", suffix = "_0reads_window40")
+
+
+generate_bg_seq("exon", anno[["exon"]], 
+                coverage = cov, n_bg_seqs= 5000, median_peak_length = 41, 
+                type= "fasta", suffix = "_0reads_window40")
+generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
+                coverage = cov, n_bg_seqs=5000, median_peak_length=41, 
+                type = "fasta", suffix = "_0reads_window40")
+
+## Background for RNAfold structure comparison
+generate_bg_seq("exon", anno[["exon"]], 
+                coverage = cov, n_bg_seqs= 809, median_peak_length = 41, 
+                type= "both", suffix = "_0reads_window40")
+generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
+                coverage = cov, n_bg_seqs=316, median_peak_length=41, 
+                type = "both", suffix = "_0reads_window40")
+
+
 
