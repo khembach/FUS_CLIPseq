@@ -6,6 +6,7 @@ library(easyLift)
 library(stringr)
 library(GenomicFeatures)
 library(ggplot2)
+library(tidyr)
 
 base_dir <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018/"
 
@@ -125,14 +126,30 @@ plot_mean_reactivity <- function(base_dir, npeaks, a, gtf, reac){
   ggsave(file.path(base_dir, "CIRS_reactivity", paste0("SNS_70K_clipper_top_", npeaks, "_peaks_", a, "_window40_CIRS_reactivity_mean_tr_HOMERmotif.png")),
          plot=p, width=6, height=4)
   
-  # mean_reactivity <- colMeans(reac_mat_mean)
-  # dat <- data.frame(position = 1:41, mean_reactivity = mean_reactivity)
-  # 
-  # p <- ggplot(dat, aes(x=position, y = mean_reactivity)) +
-  #   geom_line()+
-  #   theme_bw()
-  # ggsave(file.path(base_dir, "CIRS_reactivity", paste0("SNS_70K_clipper_top_", npeaks, "_peaks_", a, "_window40_CIRS_reactivity_mean_tr.png")), 
-  #        plot=p, width=6, height=4)
+  
+  ## Plot all windows as violin plots
+  colnames(reac_mat_mean) <- as.character(1:42) 
+  colnames(reac_mat_mean)[42] <- "motif"
+  reac_mat_mean <- as.data.frame(reac_mat_mean)
+  dat_violin <- gather(reac_mat_mean, key="position", value="reactivity", -motif)
+  dat_violin$position <- factor(dat_violin$position, levels=1:41)
+  dat_violin$motif <- as.logical(dat_violin$motif)
+  
+  p <- ggplot(dat_violin, aes(x=position, y = reactivity, fill=motif)) +
+    geom_violin()+
+    theme_bw() 
+  ggsave(file.path(base_dir, "CIRS_reactivity", 
+                   paste0("SNS_70K_clipper_top_", npeaks, "_peaks_", a, "_window40_CIRS_reactivity_HOMERmotif_violin.png")),
+         plot=p, width=8, height=4)
+  
+  
+  p <- ggplot(dat_violin, aes(x=position, y = reactivity, fill=motif)) +
+    geom_boxplot(outlier.shape = NA)+
+    theme_bw() 
+  ggsave(file.path(base_dir, "CIRS_reactivity", 
+                   paste0("SNS_70K_clipper_top_", npeaks, "_peaks_", a, "_window40_CIRS_reactivity_HOMERmotif_boxplot.png")),
+         plot=p, width=8, height=4)
+  
 }
 
 
@@ -145,3 +162,6 @@ plot_mean_reactivity(base_dir, 809, "exon", gtf, reac )
 ## increase the window size on the transcript mapping to 100 instead of 40  --> no change for 3'UTR, no peak in reactivity in window! X
 # compute the mean for each window if it has more than one tr.  X
 # how does the median look like?  X median is 0!
+
+
+## TODO plot the actual values as violin plot per window position
