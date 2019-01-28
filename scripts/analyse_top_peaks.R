@@ -196,7 +196,6 @@ write.table(counts_per_gene_mean, file = file.path(base_dir, "analysis",
             sep = "\t", quote=FALSE, row.names = FALSE )
 
 
-
 ## Sort the data.frame to get the list of genes with specific binding
 ## exonic peaks
 sorted <- counts_per_gene_mean[ order(counts_per_gene_mean$exon, decreasing = TRUE) ,]
@@ -680,5 +679,64 @@ counts_per_gene_mean <- counts_per_gene_mean[!is.na(counts_per_gene_mean$KI_WT_r
 counts_per_gene_mean <- counts_per_gene_mean[ order(counts_per_gene_mean$exon, 
                                                     counts_per_gene_mean$three_prime_utr, 
                                                     decreasing = TRUE) ,]
+
+##################
+# Intronic peaks #
+##################
+
+#### Make a list of all peaks that are located in intronic regions
+library(GenomicFeatures)
+txdb <- makeTxDbFromGRanges(gtf)
+introns <- intronsByTranscript(txdb)
+introns <- unique(unlist(introns))
+
+clipper_intron <- list()
+for (sample in c("SNS_70K", "HOMO_70K")) {
+  clipper_intron[[sample]] <- subsetByOverlaps(clipper[[sample]], introns)
+}
+
+## remove all intronic peaks that also overlap with exons or 3'UTR or 5'UTR
+clipper_intron_alone <- list()
+for (sample in c("SNS_70K", "HOMO_70K")) {
+  clipper_intron_alone[[sample]] <- subsetByOverlaps(clipper_intron[[sample]],
+                                                     unique(c(anno[["exon"]], 
+                                                              anno[["five_prime_utr"]], 
+                                                              anno[["three_prime_utr"]])),
+                                                     invert = TRUE)
+}
+
+## function to add gene annotations to the peaks
+add_gene_annotation <- function(peaks, genes){
+  olap <- findOverlaps(peaks, genes)
+  res <- peaks[queryHits(olap), "score"]
+  mcols(res) <- cbind(mcols(res), mcols(genes[subjectHits(olap), c("gene_id", "gene_name", "gene_biotype")]))
+  res
+}
+
+
+clipper_intron_alone <- lapply(clipper_intron_alone, function(x) 
+  add_gene_annotation(x, anno[["gene"]]))
+
+## create data.frame with the gene and the number of intronic peaks
+## also write the raw peaks to BED file
+for (sample in c("SNS_70K", "HOMO_70K")) {
+  gene_counts <- mcols(clipper_intron_alone[[1]]) %>% 
+    dplyr::tbl_df() %>%
+    dplyr::group_by(gene_id, gene_name, gene_biotype) %>%
+    dplyr::summarise(nr_peaks = n())
+  write.table(gene_counts, file = file.path(base_dir, "analysis", 
+                                            "deduplicated", "top_peaks", 
+                                            paste0(sample, "_intronic_peak_counts_per_gene.txt")), 
+              sep = "\t", quote=FALSE, row.names = FALSE )
+  
+  export(clipper_intron_alone[[sample]], file.path(base_dir, "analysis", 
+                                                   "deduplicated", "top_peaks", 
+                                                   paste0( sample, "_clipper_intronic_peaks_top1000.bed")))
+}
+
+## write the list of peaks to 
+
+
+
 
 
