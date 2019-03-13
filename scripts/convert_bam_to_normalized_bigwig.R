@@ -10,6 +10,12 @@ base_dir <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018"
 # HOMO_70K: 42008030 + 0 properly paired (100.00% : N/A)
 # --> we need to divide the numbers by 2 to get the number of read pairs
 
+## The number of reads is the number of reads in the deduplicated samples
+# If we compare the number with the original BAM files we get correct % of deduplication:
+## SNS: 1 - 9329000 / 18504408 = 0.4958499 duplication
+## HOMO: 1 - 21004015/26547443 = 0.2088121 duplication
+
+
 ## the scale the bigger sample to the size of the smaller sample
 # Scaling factor= sample size/size of smalles sample
 samples <- data.frame(name=c("SNS_70K", "HOMO_70K"), size=c(18658000/2, 42008030/2))
