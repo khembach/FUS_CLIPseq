@@ -370,6 +370,59 @@ ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
                  "barplot_peak_location_percentage_top1000.pdf"),
        p, width = 7, height = 7) 
 
+##########
+### Only plot CLIPper, because we decided to do all further analyses with
+### CLIPper instead of omniCLIP
+df_top <- as.data.frame(sapply(clipper_olap_len_top, as.data.frame))
+df_top$annotation <- rownames(df_top)
+df_top[,names(df_top) != "annotation"] <- apply(df_top[,names(df_top) != "annotation"], 2, as.integer)
+
+df_top <- melt(df_top, id.vars = "annotation",variable.name = "sample", value.name = "peak_number")
+df_top <- df_top[df_top$annotation != "gene",]
+df_top$percentage_sum <- df_top$peak_number / sapply(df_top$sample, function(x) 
+  sum(df_top[df_top$sample == x, "peak_number"]) ) * 100
+df_top$percentage <- df_top$peak_number / 1000 * 100
+df_top$annotation <- factor(df_top$annotation, 
+                            levels = c("exon", "intron", "five_prime_utr", "three_prime_utr"))
+df_top$sample <- sapply(strsplit(as.character(df_top$sample), split = "-"), "[", 2)
+
+## percentage relative to sum of all peaks per sample
+p <- ggplot(df_top, aes(x = annotation, y = percentage_sum, fill = sample)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  theme(text=element_text(size=25), axis.text.x = element_text(angle = 45, hjust = 1) ) +
+  ggtitle("Top 1000 peaks")
+p
+
+ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+                 "barplot_peak_location_percentage_top1000_CLIPper_peakSum.pdf"),
+       p) 
+
+## percentag using a total of 1000 peaks
+p <- ggplot(df_top, aes(x = annotation, y = percentage, fill = sample)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  theme(text=element_text(size=25), axis.text.x = element_text(angle = 45, hjust = 1) ) +
+  ggtitle("Top 1000 peaks")
+p
+
+ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+                 "barplot_peak_location_percentage_top1000_CLIPper.pdf"),
+       p) 
+
+## using number of reads instead of percentage
+p <- ggplot(df_top, aes(x = annotation, y = peak_number, fill = sample)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  theme(text=element_text(size=25), axis.text.x = element_text(angle = 45, hjust = 1) ) +
+  ggtitle("Top 1000 peaks")
+p
+
+ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+                 "barplot_peak_location_peak_number_top1000_CLIPper.pdf"),
+       p) 
+
+
 
 ######################
 # Gene scatter plots #
@@ -578,6 +631,8 @@ clipper_top_specific_all <- subsetByOverlaps(clipper_top_anno[["SNS_70K"]], clip
 omni_top_specific_all <- subsetByOverlaps(omni_top_anno[["SNS_70K"]], omni[["HOMO_70K"]], invert = TRUE)
 
 
+
+
 write.table(subsetByOverlaps(clipper_top_anno[["SNS_70K"]],
                              clipper_top_anno[["HOMO_70K"]], invert = TRUE), 
             file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
@@ -602,11 +657,25 @@ write.table(subsetByOverlaps(omni_top_anno[["SNS_70K"]],
                       paste0("omniCLIP_SNS_top1000_peaks_specific_all_homogenate.txt")), 
             sep = "\t", row.names = FALSE, quote=FALSE)
 
+## specific for homogenate
+write.table(subsetByOverlaps(clipper_top_anno[["HOMO_70K"]],
+                             clipper_top_anno[["SNS_70K"]], invert = TRUE), 
+            file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
+                      paste0("CLIPper_homogenate_top1000_peaks_specific_top_SNS.txt")), 
+            sep = "\t", row.names = FALSE, quote=FALSE)
+
+write.table(subsetByOverlaps(clipper_top_anno[["HOMO_70K"]],
+                             clipper[["SNS_70K"]], invert = TRUE), 
+            file.path(base_dir, "analysis", "deduplicated", "top_peaks", "peak_lists", 
+                      paste0("CLIPper_homogenate_top1000_peaks_specific_all_SNS.txt")), 
+            sep = "\t", row.names = FALSE, quote=FALSE)
+
+
 ### number of unique genes per list
 lapply(omni_top_anno, function(x) length(unique(x$gene_name)))
 # SNS: 943, HOMO: 808
 lapply(clipper_top_anno, function(x) length(unique(x$gene_name)))
-# SNS: 189, HOMO: 167
+# SNS: 189, HOMO: 157
 
 length(unique(omni_top_specific_top$gene_name)) # 942
 length(unique(omni_top_specific_all$gene_name)) # 676
