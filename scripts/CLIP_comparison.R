@@ -145,6 +145,32 @@ ggsave(file.path(base_dir, "analysis","deduplicated", "comparison_old_clip",
        p, width=7, height =7) 
 
 
+#### Only the CLIPper results
+df <- as.data.frame(sapply(clipper_olap_len, as.data.frame))
+df$annotation <- rownames(df)
+df[,names(df) != "annotation"] <- apply(df[,names(df) != "annotation"], 2, as.integer)
+
+df <- melt(df, id.vars = "annotation",variable.name = "sample", value.name = "peak_number")
+df <- df[df$annotation != "gene",]
+df$percentage_sum <- df$peak_number / sapply(df$sample, function(x) 
+  sum(df[df$sample == x, "peak_number"]) ) * 100
+df$annotation <- factor(df$annotation, 
+                            levels = c("exon", "intron", "five_prime_utr", "three_prime_utr"))
+
+p <- ggplot(df, aes(x = annotation, y = peak_number, fill = sample)) +
+  geom_col(position = "dodge") +
+  theme_bw() +
+  theme(text=element_text(size=25), axis.text.x = element_text(angle = 45, hjust = 1) ) +
+  ggtitle("All peaks")
+p
+
+ggsave(file.path(base_dir, "analysis", "deduplicated", "top_peaks",
+                 "barplot_peak_location_peak_number_CLIPper.pdf"),
+       p) 
+
+
+
+
 ######################
 # Gene scatter plots #
 ######################
