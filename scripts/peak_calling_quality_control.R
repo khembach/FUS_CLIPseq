@@ -200,22 +200,25 @@ for (sample in c("HOMO_70K", "SNS_70K")){
 
 
 
-peak_location_barplot <- function(clipper, omni, filepath) {
-  ## overlap the peaks with the annotation
-  clipper_olap <- list()
-  clipper_olap_len <- list()
-  # for (sample in metadat$ID) {
-  for (sample in c("HOMO_70K", "SNS_70K")){
-    clipper_olap[[sample]] <- lapply(anno, function(x)
-      mcols(subsetByOverlaps(clipper[[sample]], x, type = "any"))$name )
-    clipper_olap_len[[sample]] <- lapply(names(anno), function(x) 
-      length(clipper_olap[[sample]][[x]]))
-    names(clipper_olap_len[[sample]]) <- names(anno)
-    clipper_olap_len[[sample]]["intron"] <- sum( ! clipper_olap[[sample]][["gene"]] %in% 
-                                                   c(clipper_olap[[sample]][["exon"]], 
-                                                     clipper_olap[[sample]][["five_prime_utr"]], 
-                                                     clipper_olap[[sample]][["three_prime_utr"]]) )
-  } 
+peak_location_barplot <- function(clipper=NA, omni, filepath) {
+  if (!is.na(clipper)) {
+    ## overlap the peaks with the annotation
+    clipper_olap <- list()
+    clipper_olap_len <- list()
+    # for (sample in metadat$ID) {
+    for (sample in c("HOMO_70K", "SNS_70K")){
+      clipper_olap[[sample]] <- lapply(anno, function(x)
+        mcols(subsetByOverlaps(clipper[[sample]], x, type = "any"))$name )
+      clipper_olap_len[[sample]] <- lapply(names(anno), function(x) 
+        length(clipper_olap[[sample]][[x]]))
+      names(clipper_olap_len[[sample]]) <- names(anno)
+      clipper_olap_len[[sample]]["intron"] <- sum( ! clipper_olap[[sample]][["gene"]] %in% 
+                                                     c(clipper_olap[[sample]][["exon"]], 
+                                                       clipper_olap[[sample]][["five_prime_utr"]], 
+                                                       clipper_olap[[sample]][["three_prime_utr"]]) )
+    } 
+    names(clipper_olap_len) <- paste0("CLIPper-", names(clipper_olap_len))
+  }
   
   omni_olap <- list()
   omni_olap_len <- list()
@@ -231,11 +234,11 @@ peak_location_barplot <- function(clipper, omni, filepath) {
                                                   omni_olap[[sample]][["three_prime_utr"]]) )
   } 
   
-  names(clipper_olap_len) <- paste0("CLIPper-", names(clipper_olap_len))
+  
   names(omni_olap_len) <- paste0("omniCLIP-", names(omni_olap_len))
   df <- as.data.frame( t( 
     cbind( 
-      sapply(clipper_olap_len, as.data.frame),
+      if (!is.na(clipper)) {sapply(clipper_olap_len, as.data.frame)},
       sapply(omni_olap_len, as.data.frame)) 
   ) )
   
@@ -330,7 +333,9 @@ p
 ggsave(file.path(out_dir, "omniCLIP_score_cutoff.pdf"), p, 
        width = 5, height = 4) 
 
-## maybe use a cutoff of 5e-06 or 1e-06 ?
+## maybe use a cutoff of 5e-06 or 1e-06?
+
+
 
 
 #### Write a list with the gene ids of the top 1000 peaks in each sample 
@@ -378,52 +383,116 @@ for (sample in c("HOMO_70K", "SNS_70K")){
 
 
 ## annotate where the peaks are located within a gene
-for (sample in c("HOMO_70K", "SNS_70K")){
-  print(sample)
-  top_genes <- anno[["gene"]][anno[["gene"]]$gene_id %in% omni_top[[sample]]$gene_id]
-  
-  counts_per_gene <- data.frame(gene = top_genes$gene_id, 
-                                exon = 0,
-                                five_prime_utr = 0, 
-                                three_prime_utr = 0, 
-                                intron = 0, 
-                                total = 0)
-  for (g in 1:length(top_genes)){
-    g_id <- top_genes$gene_id[g]
-    peaks <- omni_top[[sample]][omni_top[[sample]]$gene_id == g_id]
-    counts_per_gene[g, "total"] <- length(peaks)
-    
-    a <- c(anno[["exon"]][anno[["exon"]]$gene_id == g_id], 
-           anno[["three_prime_utr"]][anno[["three_prime_utr"]]$gene_id == g_id],
-           anno[["five_prime_utr"]][anno[["five_prime_utr"]]$gene_id == g_id])
-      
-    peaks_intron <- subsetByOverlaps(peaks, a, invert = TRUE)
-    counts_per_gene[g, "intron"] <- length(peaks_intron)
-    
-    a <- split(a, factor(mcols(a)$type) )
-    for(i in names(a)){
-      p <- subsetByOverlaps(peaks, a[[i]])
-      counts_per_gene[g,i] <- length(p)
-    }
-  }
-  
-  m <- match(counts_per_gene$gene, anno[["gene"]]$gene_id)
-  ## add the gene location, the name and biotype to the list
-  counts_per_gene <- cbind(counts_per_gene, seqnames = seqnames(anno[["gene"]][m]), 
-                           start = start(anno[["gene"]][m]), end = end(anno[["gene"]][m]),
-                           mcols(anno[["gene"]][m, c("gene_name", "gene_biotype")]))
-  counts_per_gene <- counts_per_gene %>%
-    as.data.frame() %>% 
-    dplyr::select(gene, seqnames, start, end, gene_name, gene_biotype, exon, five_prime_utr, 
-                  three_prime_utr, intron, total)
 
-  ## Sort after number of exonic and 3'UTR peaks per gene
-  sorted <- counts_per_gene[order(counts_per_gene$exon, 
-                                   counts_per_gene$three_prime_utr, decreasing = TRUE), ]
-  write.table(sorted, 
-              file = file.path(out_dir1, paste0(sample, "_top1000_peaks_per_gene_region.txt")), 
-              sep = "\t", quote = FALSE, row.names = FALSE)
+write_gene_list <- function(anno, omni_top, out_dir1, suffix) {
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    print(sample)
+    top_genes <- anno[["gene"]][anno[["gene"]]$gene_id %in% omni_top[[sample]]$gene_id]
+    
+    counts_per_gene <- data.frame(gene = top_genes$gene_id, 
+                                  exon = 0,
+                                  five_prime_utr = 0, 
+                                  three_prime_utr = 0, 
+                                  intron = 0, 
+                                  total = 0)
+    for (g in 1:length(top_genes)){
+      g_id <- top_genes$gene_id[g]
+      peaks <- omni_top[[sample]][omni_top[[sample]]$gene_id == g_id]
+      counts_per_gene[g, "total"] <- length(peaks)
+      
+      a <- c(anno[["exon"]][anno[["exon"]]$gene_id == g_id], 
+             anno[["three_prime_utr"]][anno[["three_prime_utr"]]$gene_id == g_id],
+             anno[["five_prime_utr"]][anno[["five_prime_utr"]]$gene_id == g_id])
+        
+      peaks_intron <- subsetByOverlaps(peaks, a, invert = TRUE)
+      counts_per_gene[g, "intron"] <- length(peaks_intron)
+      
+      a <- split(a, factor(mcols(a)$type) )
+      for(i in names(a)){
+        p <- subsetByOverlaps(peaks, a[[i]])
+        counts_per_gene[g,i] <- length(p)
+      }
+    }
+    
+    m <- match(counts_per_gene$gene, anno[["gene"]]$gene_id)
+    ## add the gene location, the name and biotype to the list
+    counts_per_gene <- cbind(counts_per_gene, seqnames = seqnames(anno[["gene"]][m]), 
+                             start = start(anno[["gene"]][m]), end = end(anno[["gene"]][m]),
+                             mcols(anno[["gene"]][m, c("gene_name", "gene_biotype")]))
+    counts_per_gene <- counts_per_gene %>%
+      as.data.frame() %>% 
+      dplyr::select(gene, seqnames, start, end, gene_name, gene_biotype, exon, five_prime_utr, 
+                    three_prime_utr, intron, total)
+  
+    ## Sort after number of exonic and 3'UTR peaks per gene
+    sorted <- counts_per_gene[order(counts_per_gene$exon, 
+                                     counts_per_gene$three_prime_utr, decreasing = TRUE), ]
+    write.table(sorted, 
+                file = file.path(out_dir1, paste0(sample, "_peaks_per_gene_region", suffix, ".txt")), 
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
 }
 
 
+write_gene_list(anno, omni_top, out_dir1, "_top1000")
+
+## filter peaks based on p-value cutoff 5e-06 or 1e-06
+for (cutoff in c(5e-06, 1e-06)) {
+  omni_filtered <- lapply(omni, function(x) x[x$score <= cutoff])
+  ## plot the location of the top peaks
+  peak_location_barplot(omni = omni_filtered, 
+                        filepath = file.path(out_dir, 
+                                             paste0("barplot_peak_location_percentage_cutoff", 
+                                                    as.character(cutoff), ".pdf")))
+  ## write the gene lists 
+  # write_gene_list(gtf, omni_filtered, out_dir1, paste0("_cutoff", as.character(cutoff)))
+  write_gene_list_fast(gtf, omni_filtered, out_dir1, paste0("_cutoff", as.character(cutoff), "_test"))
+}
+
+
+## This is much faster than the function before, but is not 100% correct,
+## because it overlaps the peaks with all annotations and not just the gene
+## regions from the gene in which the peak is predicted. So for overlapping
+## genes, we might annotate the peak wrongly to an exon/3'UTR/5'UTR of another
+## gene.
+
+
+write_gene_list_fast <- function(gtf, omni_filtered, out_dir1, suffix) {
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    print(sample)
+
+    counts_per_gene <- omni_filtered[[sample]] %>% 
+      as.data.frame() %>%
+      mutate(exon = overlapsAny(omni_filtered[[sample]], gtf[gtf$type == "exon"]),
+             five_prime_utr = overlapsAny(omni_filtered[[sample]], gtf[gtf$type == "five_prime_utr"]),
+             three_prime_utr = overlapsAny(omni_filtered[[sample]], gtf[gtf$type == "three_prime_utr"]),
+             intron = !overlapsAny(omni_filtered[[sample]], c(gtf[gtf$type == "exon"], 
+                                                              gtf[gtf$type == "five_prime_utr"], 
+                                                              gtf[gtf$type == "three_prime_utr"]))) %>%
+      select(seqnames, start, end, strand, gene_id, exon, 
+             five_prime_utr, three_prime_utr, intron) %>%
+      group_by(gene_id) %>%
+      summarize(exon = sum(exon), five_prime_utr = sum(five_prime_utr),
+                three_prime_utr = sum(three_prime_utr), intron = sum(intron), 
+                total = n()) 
+
+    m <- match(counts_per_gene$gene_id, gtf[gtf$type == "gene"]$gene_id)
+    ## add the gene location, the name and biotype to the list
+    counts_per_gene <- cbind(counts_per_gene, seqnames = seqnames(gtf[gtf$type == "gene"][m]), 
+                             start = start(gtf[gtf$type == "gene"][m]), end = end(gtf[gtf$type == "gene"][m]),
+                             mcols(gtf[gtf$type == "gene"][m, c("gene_name", "gene_biotype")]))
+    counts_per_gene <- counts_per_gene %>%
+      as.data.frame() %>% 
+      dplyr::select(gene_id, seqnames, start, end, gene_name, gene_biotype, exon, five_prime_utr, 
+                    three_prime_utr, intron, total)
+    ## Sort after number of exonic and 3'UTR peaks per gene
+    sorted <- counts_per_gene[order(counts_per_gene$exon, 
+                                    counts_per_gene$three_prime_utr, 
+                                    counts_per_gene$five_prime_utr, 
+                                    counts_per_gene$total, decreasing = TRUE), ]
+    write.table(sorted, 
+                file = file.path(out_dir1, paste0(sample, "_peaks_per_gene_region", suffix, ".txt")), 
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+}
 
