@@ -23,6 +23,7 @@ rule all:
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
 		# "MultiQC/multiqc_report.html",
 		# expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
+		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "SNS_70K", group="SNS"),
 		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "HOMO_70K", group="Brain")
 		# expand("STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam", sample = samples.ID.values.tolist())
 		# expand("BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai", sample = samples.ID.values.tolist())
@@ -291,7 +292,6 @@ rule create_annotation_DB:
 		# expand("python {omniCLIP_dir}/data_parsing/CreateGeneAnnotDB.py {input} {output}",
 		# input = input, output = output, omniCLIP_dir = config["omniCLIP_dir"])
 
-## backup
 # rule omniCLIP:
 # 	input:
 # 		anno = config["annotation_DB"],
@@ -315,18 +315,32 @@ rule create_annotation_DB:
 # 		"--out-dir omniCLIP/ "
 # 		"--nb-cores {threads} "
 # 		## additional parameters, not used for the first call to the method, only if it crashed after read processing
-		# "--use-precomp-CLIP-data " ### load the fg_reads.dat file
-		# "--use-precomp-bg-data " ## load the bg reads
-		# "--restart-from-iter "
-		# "--use_precomp_diagmod omniCLIP/IterSaveFile.dat"  ## load precomputed parameters from file
+# 		"--use-precomp-CLIP-data " ### load the fg_reads.dat file
+# 		"--use-precomp-bg-data " ## load the bg reads
+# 		"--restart-from-iter "
+# 		"--use_precomp_diagmod omniCLIP/IterSaveFile.dat"  ## load precomputed parameters from file
 
 
+## Notes on the omniCLIP installation:
+## omniCLIP only runs with python 2.7
+## I thus created a conda environment with python 2.7 and installed omniCLIP there.
+## conda create -n omniCLIP_env python=2.7
+## activate the environment with
+## source activate omniCLIP_env
+## Then I installed the required packages with conda
+## conda install biopython brewer2mpl cython gffutils h5py intervaltree matplotlib numpy pandas pysam scikit-learn scipy statsmodels
+## I install prettyplotlib with pip
+## pip install prettyplotlib
+## Last, we export the environment specification to a file with
+## conda env export > /home/Shared/data/seq/sonu_CLIPseq/clip_March2018/envs/omniCLIP_env.yml
 
-# samples.group[samples.ID == {sample}]
-# lambda wildcards: config["samples"][wildcards.sample]
+## The bg samples (polyA RNA-seq are single-end 126nts), the CLIP libraries are paired-end 76 nts. Since the read lengths are note very similar, we use the RNA-seq as is (without shortening the reads)
 
-### run omniCLIP on the mapped forward reads
 
+## Thoughts: should we use the deduplicated BAM files?
+## We have deduplicated reads, but no UMIs, so technically --collapsed-CLIP is not correct....
+## From the code I understand that omniCLIP collapsed the UMI read names if --collapsed-CLIP is set
+## we do not fit diagnostic events model at SNP positions
 rule omniCLIP:
 	input:
 		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai",
@@ -349,8 +363,41 @@ rule omniCLIP:
 		"--nb-cores {threads} "
 		"--max-it 10; "
 		"mv omniCLIP/{wildcards.sample}/pred.bed omniCLIP/{wildcards.sample}/{wildcards.sample}_bg_{wildcards.group}_pred.bed"
-		# "--restart-from-iter "
+		
 		# "--use_precomp_diagmod omniCLIP/{wildcards.sample}/IterSaveFile.dat"
+		## this give and error:
+		# "--filter-snps "
+
+
+# samples.group[samples.ID == {sample}]
+# lambda wildcards: config["samples"][wildcards.sample]
+
+### run omniCLIP on the mapped forward reads
+
+# rule omniCLIP:
+# 	input:
+# 		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai",
+# 		anno = config["annotation_DB"],
+# 		genome_dir = os.path.dirname(config["genome_dir"]),
+# 		clip = "BAM_deduplicated/{sample}/{sample}_deduplicated.bam",
+# 		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
+# 		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
+# 	output:
+# 		"omniCLIP/{sample}/{sample}_bg_{group}_pred.bed"
+# 	conda:
+# 		"envs/omniCLIP.yaml"
+# 	threads: config["ncores"]
+# 	shell:
+# 		"python " + config["omniCLIP_dir"] +"/omniCLIP.py "
+# 		"--annot {input.anno} --genome-dir {input.genome_dir} "
+# 		"--clip-files {input.clip} "
+# 		"--bg-files {input.bg1} --bg-files {input.bg2} "
+# 		"--out-dir omniCLIP/{wildcards.sample}/ "
+# 		"--nb-cores {threads} "
+# 		"--max-it 10; "
+# 		"mv omniCLIP/{wildcards.sample}/pred.bed omniCLIP/{wildcards.sample}/{wildcards.sample}_bg_{wildcards.group}_pred.bed"
+# 		# "--restart-from-iter "
+# 		# "--use_precomp_diagmod omniCLIP/{wildcards.sample}/IterSaveFile.dat"
 
 
 #
