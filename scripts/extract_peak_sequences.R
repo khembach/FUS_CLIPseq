@@ -155,7 +155,10 @@ median_peak_length <- median(width(peaks_anno[["SNS_70K"]]$exon))
 
 ## function to simulate background peaks with the median peak length in a 
 ## specific annotation type, not overlapping with any predicted peaks.
-generate_bg_seq <- function(anno_type, anno, peaks=NULL, coverage=NULL, n_bg_seqs, median_peak_length, type = "bed", genome_seq = genome, suffix = ""){
+generate_bg_seq <- function(anno_type, anno, peaks=NULL, coverage=NULL, 
+                            n_bg_seqs, median_peak_length, bg_widths,
+                            type = "bed", 
+                            genome_seq = genome, prefix = "", suffix = ""){
   if ( !is.null(peaks) ){  # all regions of the same type without peaks
     bg_region <- subsetByOverlaps(anno, peaks, invert = TRUE)
   } else if( !is.null(coverage) ){  # all regions without any reads
@@ -165,37 +168,51 @@ generate_bg_seq <- function(anno_type, anno, peaks=NULL, coverage=NULL, n_bg_seq
   bg_region <- bg_region[ seqnames(bg_region) %in% c("X", "Y", as.character(1:19) ) ]
   seqlevels(bg_region) <- seqlevelsInUse(bg_region)  # drop unused levels
   
-  # discard all that are shorter than the median peak length
-  bg_region <- bg_region[ width(bg_region) >= median_peak_length ]
-  # randomly choose regions and start positions for the bg seq
-  bg_region <- sample(bg_region, n_bg_seqs, replace= TRUE)
+  # discard all that are shorter than the longest peak
+  if (is.null(bg_widths)) {
+    if (!is.null(median_peak_length)){
+      peak_lengths <- median_peak_length
+      bg_region <- bg_region[ width(bg_region) >= peak_lengths]
+      
+    } else {
+      stop(paste0("The peak length is unknown, please supply one of 
+                  'median_peak_length' or 'bg_widths'"))
+    }
+  } else {
+    peak_lengths <- bg_widths
+    bg_region <- bg_region[ width(bg_region) >= max(peak_lengths)]
+  }
+  print(length(bg_region))
+  # randomly choose regions and start positions for the bg seqs
+  bg_region <- sample(bg_region, n_bg_seqs, replace = TRUE)
+  starts <- floor(start(bg_region) + 
+                    (runif(n_bg_seqs) * (width(bg_region) - peak_lengths + 1)))
   # starts <- sapply(bg_region, function(s) 
   #   sample(start(x):(end(x)-median_peak_length), 1))
-  starts <- floor( start(bg_region)+
-                     (runif(n_bg_seqs)*(width(bg_region)-median_peak_length)))
   
   bg_gr <- GRanges(seqnames = seqnames(bg_region), 
                    ranges = IRanges(start = starts, 
-                                    end = starts + median_peak_length -1),
+                                    end = starts + peak_lengths - 1),
                    strand = strand(bg_region))
   
+
   if (type == "fasta"){
     bg_seq <- getSeq(genome_seq, bg_gr)
     export(bg_seq, 
            con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta",
-                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, suffix, ".fasta")))
+                           paste0(prefix, "_bg_", anno_type, "_", n_bg_seqs, suffix, ".fasta")))
   } else if (type == "bed"){
     export(bg_gr, 
            con = file.path(base_dir, "analysis", "deduplicated", "peaks_bed",
-                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs,suffix, ".bed")))
+                           paste0(prefix, "_bg_", anno_type, "_", n_bg_seqs,suffix, ".bed")))
   } else if (type == "both"){
     bg_seq <- getSeq(genome_seq, bg_gr)
     export(bg_seq, 
            con = file.path(base_dir, "analysis", "deduplicated", "peaks_fasta",
-                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs, suffix, ".fasta")))
+                           paste0(prefix, "_bg_", anno_type, "_", n_bg_seqs, suffix, ".fasta")))
     export(bg_gr, 
            con = file.path(base_dir, "analysis", "deduplicated", "peaks_bed",
-                           paste0("SNS_70K_bg_", anno_type, "_", n_bg_seqs,suffix, ".bed")))
+                           paste0(prefix, "_bg_", anno_type, "_", n_bg_seqs,suffix, ".bed")))
   } else {
     print(paste0("type ", type, " unknown! Please pick one of fasta or bed."))
   }
@@ -204,24 +221,24 @@ generate_bg_seq <- function(anno_type, anno, peaks=NULL, coverage=NULL, n_bg_seq
 
 generate_bg_seq("exon", anno[["exon"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                1000, median_peak_length, "fasta")
+                1000, median_peak_length, "fasta", prefix = "SNS_70K")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                1000, median_peak_length, "fasta")
+                1000, median_peak_length, "fasta", prefix = "SNS_70K")
 generate_bg_seq("exon", anno[["exon"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                200000, median_peak_length, "fasta")
+                200000, median_peak_length, "fasta", prefix = "SNS_70K")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                200000, median_peak_length, "fasta")
+                200000, median_peak_length, "fasta", prefix = "SNS_70K")
 
 ## bg in bed format
 generate_bg_seq("exon", anno[["exon"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                1000, median_peak_length, "bed")
+                1000, median_peak_length, "bed", prefix = "SNS_70K")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 c(clipper_all[["SNS_70K"]], clipper_all[["HOMO_70K"]]), 
-                1000, median_peak_length, "bed")
+                1000, median_peak_length, "bed", prefix = "SNS_70K")
 
 
 
@@ -419,32 +436,128 @@ gc()
 
 generate_bg_seq("exon", anno[["exon"]], 
                 coverage = cov, n_bg_seqs= 1000, median_peak_length = 41, 
-                type= "fasta", suffix = "_0reads_window40")
+                type= "fasta", prefix = "SNS_70K", suffix = "_0reads_window40")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 coverage = cov, n_bg_seqs=1000, median_peak_length=41, 
-                type = "fasta", suffix = "_0reads_window40")
+                type = "fasta", prefix = "SNS_70K", suffix = "_0reads_window40")
 generate_bg_seq("exon", anno[["exon"]], 
                 coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
-                type="fasta", suffix = "_0reads_window40")
+                type="fasta", prefix = "SNS_70K", suffix = "_0reads_window40")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
-                type="fasta", suffix = "_0reads_window40")
+                type="fasta", prefix = "SNS_70K", suffix = "_0reads_window40")
 
 
 generate_bg_seq("exon", anno[["exon"]], 
                 coverage = cov, n_bg_seqs= 5000, median_peak_length = 41, 
-                type= "fasta", suffix = "_0reads_window40")
+                type= "fasta", prefix = "SNS_70K", suffix = "_0reads_window40")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 coverage = cov, n_bg_seqs=5000, median_peak_length=41, 
-                type = "fasta", suffix = "_0reads_window40")
+                type = "fasta", prefix = "SNS_70K", suffix = "_0reads_window40")
 
 ## Background for RNAfold structure comparison
 generate_bg_seq("exon", anno[["exon"]], 
                 coverage = cov, n_bg_seqs= 809, median_peak_length = 41, 
-                type= "both", suffix = "_0reads_window40")
+                type= "both", prefix = "SNS_70K", suffix = "_0reads_window40")
 generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
                 coverage = cov, n_bg_seqs=316, median_peak_length=41, 
-                type = "both", suffix = "_0reads_window40")
+                type = "both", prefix = "SNS_70K", suffix = "_0reads_window40")
 
 
+### Background for Homo_70K sample
+sample <- "HOMO_70K"
+ga <- readGAlignmentPairs(file.path(base_dir,"BAM_deduplicated", sample, 
+                                    paste0(sample, "_deduplicated.bam")))
+cov <- coverage(ga)
+rm(ga)
+gc()
+
+generate_bg_seq("exon", anno[["exon"]], 
+                coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
+                type="fasta", prefix = "HOMO_70K", suffix = "_0reads_window40")
+generate_bg_seq("three_prime_utr", anno[["three_prime_utr"]], 
+                coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
+                type="fasta", prefix = "HOMO_70K", suffix = "_0reads_window40")
+
+## BG from intronic regions
+# library(ensembldb)
+# library(AnnotationHub)
+# if (!file.exists(file.path(base_dir, "reference", "Mus_musculus.GRCm38.90.sqlite"))) {
+#   edb_file <- ensDbFromGtf(GTF, outfile = file.path(base_dir, "reference", "Mus_musculus.GRCm38.90.sqlite"))
+# }
+# edb <- EnsDb(edb_file)
+# exons_gr <- exons(edb)
+# intron_gr <- transcripts(edb, filter = list(GeneBiotypeFilter("protein_coding")))
+# intron_gr <- setdiff(intron_gr, exons_gr)
+# anno["intron"] <- intron_gr
+
+
+
+###
+txdb <- makeTxDbFromGRanges(gtf)
+introns <- unlist(intronsByTranscript(txdb))
+## remove the intronic parts that overlap with exons from other transcripts
+anno[["intron"]] <- setdiff(introns, anno[["exon"]])
+
+
+## get the intron annotation
+generate_bg_seq("intron", anno[["intron"]], 
+                coverage = cov, n_bg_seqs=200000, median_peak_length=41, 
+                type="fasta", prefix = "HOMO_70K", suffix = "_0reads_window40")
+
+
+
+
+##########################
+# omniCLIP, cutoff 1e-06 #
+##########################
+## raw peaks sequences without centering a window on them
+cov <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  ga <- readGAlignmentPairs(file.path(base_dir,"BAM_deduplicated", sample, 
+                                      paste0(sample, "_deduplicated.bam")))
+  cov[[sample]] <- coverage(ga)
+  rm(ga)
+  gc()
+}
+
+
+
+omni <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  omni[[sample]] <- import(file.path(base_dir,"analysis","omniCLIP",
+                                     paste0("omniCLIP_", sample,"_cutoff1e-06.bed")))
+}
+
+peaks_anno <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  peaks_anno[[sample]] <- lapply(anno, function(x)
+    subsetByOverlaps(omni[[sample]], x, type = "any") )
+  names(peaks_anno[[sample]]) <- names(anno)
+}  
+
+
+## Extract the genomic sequences of all peaks
+for(sample in c("HOMO_70K", "SNS_70K")){
+  print(sample)
+  for (a in names(peaks_anno[[sample]])){
+    print(a)
+    export( getSeq(genome, peaks_anno[[sample]][[a]]), 
+            con = file.path(base_dir,"analysis", "omniCLIP", "peaks_fasta", 
+                            paste0(sample, "_omniCLIP_top_",
+                                   length(peaks_anno[[sample]][[a]]),
+                                   "_peaks_", a, ".fasta")), 
+            format = "fasta")
+
+    ws <- width(peaks_anno[[sample]][[a]])
+    bg_ws <- sample(ws, size = 200000, replace = TRUE)
+    generate_bg_seq(a, anno[[a]], 
+                    coverage = cov[[sample]], n_bg_seqs = 200000, bg_widths = bg_ws,
+                    type="fasta", prefix = sample, suffix = "_0reads_length_matched")
+  }
+}
+
+## We construct a bg set for the same gene region and length distribution:
+lapply(peaks_anno[["SNS_70K"]], function(x) summary(width(x)))
+lapply(peaks_anno[["HOMO_70K"]], function(x) summary(width(x)))
 

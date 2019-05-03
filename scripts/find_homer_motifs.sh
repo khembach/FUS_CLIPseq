@@ -61,15 +61,67 @@
 # done
 
 
-## window 40: top 2000 peaks, bg 0 CLIP reads
-for f in SNS_70K
+# ## window 40: top 2000 peaks, bg 0 CLIP reads
+# for f in SNS_70K
+#   do
+#   for a in exon three_prime_utr
+#   do
+#     echo HOMER: ${f} ${a}
+#     FASTA="../analysis/deduplicated/peak_center_window/${f}_clipper_top2k_*_peaks_${a}_window40.fasta"
+#     ~/software/homer/bin/findMotifs.pl ${FASTA} fasta ../analysis/deduplicated/HOMER/${f}_top2k_peaks_window40_${a}_len4-8_bg_${a}_0reads_window40 -len 4,5,6,7,8 -rna -fastaBg ../analysis/deduplicated/peaks_fasta/${f}_bg_${a}_2e+05_0reads_window40.fasta
+#   done
+# done
+
+
+
+
+# window 40, bg 0 CLIP reads, omniCLIP peaks with p-value <= 1e-06
+# for f in HOMO_70K SNS_70K
+#   do
+#   for a in exon three_prime_utr
+#   do
+#     for w in 40 60 80
+#     do
+#       echo HOMER: ${f} ${a}
+#       FASTA="../analysis/omniCLIP/peak_center_window/${f}_omniCLIP_top_*_peaks_${a}_window${w}.fasta"
+#       ~/software/homer/bin/findMotifs.pl ${FASTA} fasta ../analysis/omniCLIP/HOMER/${f}_top_peaks_window${w}_${a}_len4-8_bg_${a}_0reads_window40 -len 4,5,6,7,8 -rna -fastaBg ../analysis/deduplicated/peaks_fasta/${f}_bg_${a}_2e+05_0reads_window40.fasta
+#     done
+#   done
+# done
+
+
+## intronic peaks
+# for f in HOMO_70K 
+#   do
+#   for a in intron
+#   do
+#     for w in 40 60 80
+#     do
+#       echo HOMER: ${f} ${a}
+#       FASTA="../analysis/omniCLIP/peak_center_window/${f}_omniCLIP_top_*_peaks_${a}_window${w}.fasta"
+#       ~/software/homer/bin/findMotifs.pl ${FASTA} fasta ../analysis/omniCLIP/HOMER/${f}_top_peaks_window${w}_${a}_len4-8_bg_${a}_0reads_window40 -len 4,5,6,7,8 -rna -fastaBg ../analysis/deduplicated/peaks_fasta/${f}_bg_${a}_2e+05_0reads_window40.fasta
+#     done
+#   done
+# done
+
+
+## No window, just the raw peak sequences
+for f in SNS_70K HOMO_70K 
   do
   for a in exon three_prime_utr
   do
     echo HOMER: ${f} ${a}
-    FASTA="../analysis/deduplicated/peak_center_window/${f}_clipper_top2k_*_peaks_${a}_window40.fasta"
-    ~/software/homer/bin/findMotifs.pl ${FASTA} fasta ../analysis/deduplicated/HOMER/${f}_top2k_peaks_window40_${a}_len4-8_bg_${a}_0reads_window40 -len 4,5,6,7,8 -rna -fastaBg ../analysis/deduplicated/peaks_fasta/${f}_bg_${a}_2e+05_0reads_window40.fasta
+    FASTA="../analysis/omniCLIP/peaks_fasta/${f}_omniCLIP_top_*_peaks_${a}.fasta"
+    ~/software/homer/bin/findMotifs.pl ${FASTA} fasta ../analysis/omniCLIP/HOMER/${f}_top_peaks_${a}_len4-8_bg_${a}_0reads_length_matched -len 4,5,6,7,8 -rna -fastaBg ../analysis/deduplicated/peaks_fasta/${f}_bg_${a}_2e+05_0reads_length_matched.fasta
   done
 done
 
-
+for f in HOMO_70K 
+  do
+  for a in intron
+  do
+    echo HOMER: ${f} ${a}
+    FASTA="../analysis/omniCLIP/peaks_fasta/${f}_omniCLIP_top_*_peaks_${a}.fasta"
+    ~/software/homer/bin/findMotifs.pl ${FASTA} fasta ../analysis/omniCLIP/HOMER/${f}_top_peaks_${a}_len4-8_bg_${a}_0reads_length_matched -len 4,5,6,7,8 -rna -fastaBg ../analysis/deduplicated/peaks_fasta/${f}_bg_${a}_2e+05_0reads_length_matched.fasta
+  done
+done
