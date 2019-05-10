@@ -18,3 +18,6 @@ clipper/clipper_warnings.txt
 IGV_sonu*
 reference/
 CIRS_reactivity/
+*.html
+scripts/*.png
+scripts/*.xml
