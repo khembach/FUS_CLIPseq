@@ -23,11 +23,16 @@ rule all:
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
 		# "MultiQC/multiqc_report.html",
 		# expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
-		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "SNS_70K", group="SNS"),
-		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "HOMO_70K", group="Brain")
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "SNS_70K", group="SNS"),
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "HOMO_70K", group="Brain")
 		# expand("STAR/{sample}/{sample}_1_Aligned.sortedByCoord.out.bam", sample = samples.ID.values.tolist())
-		# expand("BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai", sample = samples.ID.values.tolist())
-
+		# expand("BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai", sample = samples.ID.values.tolist()),
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf", sample = "SNS_70K", group = "SNS"),
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf", sample = "HOMO_70K", group = "Brain")
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz.tbi", sample = "SNS_70K", group = "SNS"),
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz.tbi", sample = "HOMO_70K", group = "Brain")
+		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "SNS_70K", group = "SNS"),
+		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "HOMO_70K", group = "Brain")
 
 
 ## FastQC on original (untrimmed) files
@@ -413,3 +418,55 @@ rule omniCLIP:
 #             shell("bowtie2 -x {input.index} -1 {input.forward} -2 {input.reverse} -S {output.sam}")
 #         elif seq_type == "se":
 #             shell("bowtie2 -x {input.index} -U {input.reads} -S {output.sam}")
+
+
+## Compute VCF file of BED and BAM file
+rule samtools_vcf:
+	input: 
+		bed = "omniCLIP/{sample}/{sample}_bg_{group}_pred.bed",
+		bam = "BAM_deduplicated/{sample}/{sample}_deduplicated.bam",
+		genome = config["genome"]
+	output:
+		"omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf"
+	log:
+		"logs/samtools_mpileup_{sample}_bg_{group}.log"
+	shell:
+		"echo 'samtools version:\n' > {log}; samtools --version >> {log}; "
+		"samtools mpileup -f {input.genome} -l {input.bed} -uv {input.bam} > {output}"
+
+# This will produce a VCF-formatted file containing information about what variants have been seen in the SAM file, aggregated for all the mapped reads."
+
+rule filter_vcf:
+	input:
+		vcf = "omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz"
+	output:
+		"omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi",
+		gz = protected("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz")
+	params:
+		"omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf"
+	shell:
+		"zcat {input} | grep -e '##' -e '#CHROM' -e 'INDEL'  > {params}; "
+		"bgzip {params}; "
+		"tabix --zero-based -p vcf {output.gz}"
+
+
+
+
+
+## Index bam files
+rule vcf_idx:
+	input:
+		vcf = "omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf"
+	output:
+		gz = protected("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz"),
+		idx = "omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz.tbi"
+	log:
+		bgzip = "logs/samtools_index_vcf_bgzip_{sample}_bg_{group}.log",
+		tabix = "logs/samtools_index_vcf_tabix_{sample}_bg_{group}.log"
+	shell:
+		# "echo 'bgzip version:\n' > {log.bgzip}; bgzip --help >> {log.bgzip} 2>&1;"
+		"bgzip {input.vcf}; "
+		"tabix --zero-based -p vcf {output.gz}"
+		# "echo 'tabix version:\n' > {log.tabix}; tabix --help >> {log.tabix} 2>&1;"
+
+## TODO: how to redirect the help message output to a log file to save the version information?
