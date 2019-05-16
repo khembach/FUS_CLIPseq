@@ -21,3 +21,5 @@ CIRS_reactivity/
 *.html
 scripts/*.png
 scripts/*.xml
+*_files/
+*_cache/
