@@ -1517,7 +1517,36 @@ for (sample in c("HOMO_70K", "SNS_70K")){
 }
 
 
+# Site score vs dir_score
+for (sample in c("HOMO_70K", "SNS_70K")){
+  p <- ggplot(pred[[sample]], aes(x = SiteScore, y = dir_score)) +
+    geom_point(alpha = 0.1) + 
+    theme_bw() 
+  p
+  ggsave(file.path(out_dir, paste0(sample, "_SiteScore_vs_dir_score.png")), 
+         p, width = 4, height = 4) 
+}
 
+
+# pv vs. dir_score
+for (sample in c("HOMO_70K", "SNS_70K")){
+  p <- ggplot(pred[[sample]], aes(x = pv, y = dir_score)) +
+    geom_point(alpha = 0.1) + 
+    theme_bw() 
+  p
+  ggsave(file.path(out_dir, paste0(sample, "_pv_vs_dir_score.png")), 
+         p, width = 4, height = 4) 
+}
+
+# What are the SiteScore, pv and BED score of the two example peaks that I
+# picked in gene Camk4.
+
+pred_m[["SNS_70K"]] %>% 
+  as.data.frame() %>% 
+  filter(Gene == "ENSMUSG00000038128", start %in% c(33193620, 33194228))
+
+## The bigger the SiteSore, the better
+## the bigger the BED score, the better!! So the two peaks are actually ranked correctly, the left peak has the better scores!
 
 
 
