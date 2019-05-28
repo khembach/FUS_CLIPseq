@@ -1,0 +1,761 @@
+---
+title: "Peak calling quality control of omniCLIP (fixed BED score) with polyA RNA-seq"
+author: "Katharina Hembach"
+date: "5/28/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+## Comparison and quality control of the called peaks from omniCLIP and CLIPper.
+
+```{r packages, message=FALSE}
+library(here)
+library(rtracklayer)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(tximport)
+library(GenomicAlignments)
+library(GenomicFeatures)
+library(data.table)
+library(plotly)
+library(limma)
+```
+
+
+```{r input, cache = 2}
+## here sets the root directory to the github directory at
+## "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018"
+
+# base_dir <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018"
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+# 
+# out_dir <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018/analysis/deduplicated/clipper_omniCLIP_qc"
+# 
+# out_dir1 <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018/analysis/omniCLIP/ribo0"
+# out_dir_top <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018/analysis/omniCLIP/ribo0/top_100"
+out_dir_top <- here("analysis", "omniCLIP", "scoreFix", "top_100")
+
+
+metadat <- read.table(here("metadata.txt"), header = TRUE)
+
+###### Read the CLIP peaks -----------------------------------------------------
+# The score is the p-value
+clipper <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  clipper[[sample]] <- import(here("clipper", paste0("deduplicated_", sample, 
+                                              "_clipper_peaks.bed")))
+  clipper[[sample]]$gene_id <- str_split(clipper[[sample]]$name, "_", 
+                                         simplify = TRUE)[,1]
+  top1000 <- clipper[[sample]][order(mcols(clipper[[sample]])$score)][1:1000]$name
+  clipper[[sample]]$top1000 <- clipper[[sample]]$name %in% top1000
+}
+
+# The score is the SiteScore, the bigger the better
+omni <- list()
+for (i in c(1, 3)) {
+  sample <- as.character(metadat$ID[i])
+  omni[[sample]] <- import(here("omniCLIP", paste0(sample, "_scoreFix"), 
+                                paste0(sample,"_bg_", metadat$group[i], 
+                                       "_scoreFix_pred.bed")))
+  ## add a column with the gene id
+  omni[[sample]]$gene_id <- str_split(omni[[sample]]$name, "_", 
+                                      simplify = TRUE)[,1]
+  top1000 <- omni[[sample]][order(mcols(omni[[sample]])$score, 
+                                  decreasing = TRUE)][1:1000]$name
+  omni[[sample]]$top1000 <- omni[[sample]]$name %in% top1000
+}
+```
+
+
+## Gene expression estimatimated by Salmon
+
+Salmon was run with without bias correction.
+
+```{r salmon, cache = 2}
+## Read the Salmon gene quantifications ----------------------------------------
+## new bias corrected Salmon quantifications
+gtf <- import(gtf_file)
+
+salmon_base_dir <- "/home/Shared/data/seq/sonu_RNAseq/"
+salmon_dir_name <- "salmon_bias"
+
+samples <- list.files(file.path(salmon_base_dir, salmon_dir_name), 
+                      pattern = "^20170214.B-WT*")
+files <- file.path(file.path(salmon_base_dir, salmon_dir_name), 
+                   samples, "quant.sf")
+samples <- str_split(samples, pattern = "-", simplify = TRUE)[ ,2]
+samples <- gsub(pattern = "_R1", replacement = "", x = samples)
+names(files) <-  samples
+grp <- str_split(samples, pattern = "_", simplify = TRUE)
+grp <- as.factor(paste0(grp[ ,1], "_", grp[ ,2]))
+sample_nr <- str_split(samples, pattern = "_", simplify = TRUE)[,3]
+
+tx2gene<- unique(mcols(gtf)[c("transcript_id", "gene_id")])
+tx2gene <- tx2gene[!is.na(tx2gene$transcript_id), ]
+tx2gene <- tx2gene[order(tx2gene$transcript_id), ]
+## gene level counts
+txi <- tximport(files, type="salmon", txIn = TRUE, tx2gene = tx2gene, 
+                txOut=FALSE, countsFromAbundance = "no", ignoreTxVersion = TRUE)  
+tpms <- txi$abundance  # tpm per gene
+```
+
+
+## Do the two peak callers correct for gene expression?
+
+We analyse the gene expression of the CLIPper and omniCLIP peaks to see if the methods do correct for it. We assume that the top peaks should be located in genes with diverse expression levels. However, if most peaks are located in highly expressed genes, the methods do not correctly estimate the expression and correct for it. They are biased.
+
+
+```{r gene_expression, cache = 2, warning = FALSE}
+
+## Boxplot of tpm distribution of all genes that contain a peak 
+## (all peaks and top 1000)
+## both methods and both samples
+## for all replicate polyA RNA-seq samples
+df_list <- list()
+for (s in c("HOMO_70K", "SNS_70K")) {
+  if (s == "HOMO_70K") {
+    g_type <- "WT_Homo"
+    g <- colnames(tpms)[grp == "WT_Homo"]
+  } else {
+    g_type <- "WT_SNS"
+    g <- colnames(tpms)[grp == "WT_SNS"]
+  }
+  for (g1 in g) {
+    tmp <- tpms[,g1][rownames(tpms) %in% clipper[[s]]$gene_id]
+    df_list[[paste0("clipper_", s, g1)]] <- 
+      data.frame(method = "clipper",
+                 sample = s, RNAseq = g1, 
+                 tpm = tmp,
+                 top1000 = names(tmp) %in% 
+                   clipper[[s]]$gene_id[clipper[[s]]$top1000])
+    
+    tmp <- tpms[,g1][rownames(tpms) %in% omni[[s]]$gene_id]
+    df_list[[paste0("omniCLIP_", s, g1)]] <- 
+      data.frame(method = "omniCLIP", 
+                 sample = s, RNAseq = g1, 
+                 tpm = tmp,
+                 top1000 = names(tmp) %in% 
+                   omni[[s]]$gene_id[omni[[s]]$top1000])
+  }
+}
+
+df <- bind_rows(df_list)
+
+## how many of the top genes do not have Salmon gene quantifications?
+lapply(clipper, function(x) unique(x$gene_id) %in% rownames(txi$abundance) %>%
+         table)
+lapply(omni, function(x) unique(x$gene_id) %in% rownames(txi$abundance) %>%
+         table)
+
+lapply(clipper, function(x) unique(x$gene_id[x$top1000]) %in% 
+         rownames(txi$abundance) %>% table)
+lapply(omni, function(x) unique(x$gene_id[x$top1000]) %in% 
+         rownames(txi$abundance) %>% table)
+
+
+## are all the gene_ids from the peaks actually in the gtf file?  
+lapply(clipper, function(x) unique(x$gene_id) %in% gtf$gene_id %>% table)
+lapply(omni, function(x) unique(x$gene_id) %in% gtf$gene_id %>% table)
+
+
+## Plot the gene expression (tpm) vs. # peaks in gene
+# pdf(file.path(out_dir, "peak_gene_tpm_distribution.pdf"))  
+# print(
+ggplot(df, aes(x = RNAseq, y = tpm, color =  method)) +
+  geom_boxplot() + 
+  theme_bw() + 
+  scale_y_log10()
+# )
+# dev.off()
+
+# pdf(file.path(out_dir, "peak_gene_tpm_distribution_top1000.pdf"))  
+# print(
+ggplot(df, aes(x = RNAseq, y = tpm, color =  top1000)) +
+  geom_boxplot() + 
+  theme_bw() + 
+  scale_y_log10() + 
+  facet_wrap(~method) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# )
+# dev.off()
+
+
+## plot the distribution of peak scores for clipper and omniCLIP
+df1 <- data.frame(score = c(clipper[["HOMO_70K"]]$score, 
+                            clipper[["SNS_70K"]]$score), 
+                  sample = c(rep("homogenate", length(clipper[["HOMO_70K"]])), 
+                             rep("SNS", length(clipper[["SNS_70K"]]))))
+p <- ggplot(df1, aes(x = score)) +
+  geom_histogram(bins = 50) + 
+  theme_bw() +
+  facet_wrap(~sample)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p
+# ggsave(file.path(out_dir, "peak_score_distribution_clipper.pdf"), 
+# p, width = 5, height = 4) 
+
+
+df1 <- data.frame(score = c(omni[["HOMO_70K"]]$score, 
+                            omni[["SNS_70K"]]$score), 
+                  sample = c(rep("homogenate", length(omni[["HOMO_70K"]])), 
+                             rep("SNS", length(omni[["SNS_70K"]]))))
+p <- ggplot(df1, aes(x = score)) +
+  geom_histogram(bins = 50) + 
+  theme_bw() +
+  facet_wrap(~sample) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p
+# ggsave(file.path(out_dir, "peak_score_distribution_omniCLIP.pdf"), 
+# p, width = 5, height = 4) 
+```
+
+## Where are the peaks located? In which region of a gene?
+We plot the location of the peak as barplot. We want to know how different the locations between the methods and between homogenate and SNS are?
+  
+  
+```{r prepare_annotation, cache = 2, message = FALSE}
+## annotation: seperate into exon, intron, 3'UTR, 5'UTR or exon + 3'UTR/5'UTR 
+## in case the exons are overlapping
+exon <- gtf[gtf$type == "exon"] %>% unique
+gene <- gtf[gtf$type == "gene"] %>% unique
+five_utr <- gtf[gtf$type == "five_prime_utr"] %>% unique
+three_utr <- gtf[gtf$type == "three_prime_utr"] %>% unique
+
+exon_three_utr <- exon[overlapsAny(exon, three_utr, type = "any")]
+exon_five_utr <- exon[overlapsAny(exon, five_utr, type = "any")]
+exon_unique <- exon[!overlapsAny(exon, c(five_utr, three_utr),  type = "any")]
+exon_three_utr <- c(exon_three_utr, three_utr) %>% unique
+exon_five_utr <- c(exon_five_utr, five_utr) %>% unique
+
+## the set of annotations is the following, because all 3' and 5' UTR regions
+## are overlapped by an exon
+anno <- list(gene = gene, exon = exon_unique, three_prime_utr = exon_three_utr, 
+             five_prime_utr = exon_five_utr)
+
+## intron annotation
+txdb <- makeTxDbFromGRanges(gtf)
+introns <- unlist(intronsByTranscript(txdb))
+## remove the intronic parts that overlap with exons from other transcripts
+anno[["intron"]] <- setdiff(introns, anno[["exon"]])
+```
+
+```{r gene_region, cache = 2}
+## convert CLIPper peaks to Ensembl annotation
+for (sample in c("HOMO_70K", "SNS_70K")){
+  seqlevels(clipper[[sample]]) <- gsub("chr", "", seqlevels(clipper[[sample]]))
+}
+
+peak_location_barplot <- function(clipper=NA, omni, filepath) {
+  if (!missing(clipper)) {
+    ## overlap the peaks with the annotation
+    clipper_olap_len <- list()
+    for (sample in c("HOMO_70K", "SNS_70K")){
+      clipper_olap_len[[sample]] <- lapply(anno, function(x) 
+        length(subsetByOverlaps(clipper[[sample]], x, type = "any")))
+      names(clipper_olap_len[[sample]]) <- names(anno)
+    } 
+    names(clipper_olap_len) <- paste0("CLIPper-", names(clipper_olap_len))
+  }
+  
+  omni_olap_len <- list()
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    omni_olap_len[[sample]] <- lapply(anno, function(x) 
+      length(subsetByOverlaps(omni[[sample]], x, type = "any")))
+    names(omni_olap_len[[sample]]) <- names(anno)
+  } 
+  names(omni_olap_len) <- paste0("omniCLIP-", names(omni_olap_len))
+  
+  df <- as.data.frame( t( 
+    cbind( 
+      if (!missing("clipper")) {sapply(clipper_olap_len, as.data.frame)},
+      sapply(omni_olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>%gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  
+  ## stacked barplot with the percentage of reads in the different gene regions
+  p <- ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+    geom_col(position = "stack") +
+    theme_bw() +
+    theme(text=element_text(size=25), axis.text.y = element_text(angle = 45, 
+                                                                 hjust = 1) ) +
+    coord_flip() +
+    theme(legend.position="bottom", legend.direction="vertical") 
+  p
+  # ggsave(filepath, p, width=7, height =7) 
+}
+
+
+## all peaks
+peak_location_barplot(clipper, omni, 
+                      file.path(out_dir, 
+                                "barplot_peak_location_percentage.pdf"))
+
+topn <- 1000
+omni_top <- lapply(omni, function(x) x[order(mcols(x)$score, 
+                                             decreasing = TRUE)][1:topn]) 
+clipper_top <- lapply(clipper, function(x) x[order(mcols(x)$score)][1:topn]) 
+
+peak_location_barplot(clipper_top, omni_top)
+```
+
+## What is the score threshold that we should use to subselect the strongest binding sites?
+
+We vary the peak score threshold (p-value for CLIPper and SiteScore for omniCLIP) to decrease the number of peaks. We subselect less peaks, because we cannot varify so many genes and we want to focus on the gene that are strongest bound by FUS. We change the threshold and observe how the number of peaks and genes changes.
+CLIPper and omniCLIP report all peaks with a multiple testing corrected p-value of <= 0.05
+
+```{r peak_score_threshold, cache = 2, message = FALSE, warning = FALSE}
+## cutoff, # peaks, # genes
+
+cuts <- c(0, 1:9 %o% 10^(0:2))
+clips <- c("HOMO_70K", "SNS_70K")
+df0 <- data.frame(cutoff = c(cuts, cuts), peaks = NA, genes = NA, 
+                 sample = c(rep("HOMO_70K", length(cuts)), 
+                            rep("SNS_70K", length(cuts))))
+                 
+for (s in 1:length(clips)) {
+  for(i in 1:length(cuts)) { 
+    tmp <- omni[[clips[s]]][omni[[clips[s]]]$score >= cuts[i]]$gene_id
+    df0[i + length(cuts)*(s-1), "peaks"] <- length(tmp)
+    df0[i + length(cuts)*(s-1), "genes"] <- length(unique(tmp))
+  }
+}
+
+df0
+
+p <- ggplot(df0, aes(x = cutoff, y = peaks, col = sample)) +
+  geom_point() + 
+  theme_bw() + 
+  scale_x_log10()
+p
+# ggsave(file.path(out_dir, "omniCLIP_score_cutoff_peaks.pdf"), p, 
+# width = 6, height = 6) 
+
+p <- ggplot(df0, aes(x = cutoff, y = genes, col = sample)) +
+  geom_point() + 
+  theme_bw() + 
+  scale_x_log10()
+p
+# ggsave(file.path(out_dir, "omniCLIP_score_cutoff_genes.pdf"), p, 
+# width = 6, height = 6) 
+
+## in one plot
+df0 <- df0 %>% gather(key = "type", value = "count", -sample, -cutoff)
+p <- ggplot(df0, aes(x = cutoff, y = count, col = type, lty = sample)) +
+  geom_line(size = 1) + 
+  theme_bw() + 
+  scale_x_log10()
+p
+# ggsave(file.path(out_dir, "omniCLIP_score_cutoff.pdf"), p, 
+# width = 5, height = 4) 
+
+```
+
+We pick a cutoff of 100, because this gives us a reasonable number of peaks.
+```{r cutoff_100}
+df0 %>% 
+  filter(cutoff == "100")
+```
+
+## List of the genes with the top peaks in each sample (cutoff 100)
+
+```{r target_gene_list1, cache = 2, message = FALSE}
+cutoff <- 100
+
+omni_top <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  omni_top[[sample]] <- omni[[sample]][omni[[sample]]$score >= cutoff]
+}
+
+for (sample in c("HOMO_70K", "SNS_70K")){
+  write.table(unique(omni_top[[sample]]$gene_id), 
+              file.path(out_dir_top, 
+                        paste0(sample, "_cutoff", cutoff, "_peaks_genes.txt")), 
+              row.names = FALSE, col.names = FALSE, quote = FALSE)
+  write.table(unique(omni[[sample]]$gene_id), 
+              file.path(out_dir_top, paste0(sample, "_all_peaks_genes.txt")), 
+              row.names = FALSE, col.names = FALSE, quote = FALSE)
+}
+
+## Write table with the gene_id, the gene name and the number of peaks in each gene
+add_gene_annotation <- function(peaks, genes){
+  m <- match(peaks$gene_id, genes$gene_id)
+  res <- peaks[, "score"]
+  mcols(res) <- cbind(mcols(res), mcols(genes[m, c("gene_id", "gene_name", 
+                                                   "gene_biotype")]))
+  res
+}
+
+omni_top_anno <- lapply(omni_top, function(x) 
+  add_gene_annotation(x, anno[["gene"]]))
+
+for (sample in c("HOMO_70K", "SNS_70K")){
+  res <- omni_top_anno[[sample]] %>% 
+    as.data.frame() %>% 
+    dplyr::group_by(gene_id) %>%
+    dplyr::select(seqnames, gene_id, gene_name, gene_biotype) %>%
+    dplyr::mutate(nr_peaks = n()) %>%
+    dplyr::arrange(desc(nr_peaks)) %>%
+    unique()
+  
+  write.table(res, 
+              file.path(out_dir_top, 
+                        paste0(sample, "_cutoff", cutoff, "_peaks_genes_anno.txt")), 
+              row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+}
+
+```
+
+```{r target_gene_list2, cache = 2, message = FALSE, warning = FALSE}
+## annotate where the peaks are located within a gene
+write_gene_list <- function(sample, gtf, omni_filtered, outfile) {
+  counts_per_gene <- omni_filtered[[sample]] %>% 
+    as.data.frame() %>%
+    dplyr::group_by(gene_id) %>% 
+    dplyr::group_map(~ {
+      .x %>%
+        GRanges(.) %>%
+        data.frame(exon = overlapsAny(., {a <- gtf[gtf$gene_id == .y$gene_id];
+        a[a$type == "exon"]}),
+        five_prime_utr = overlapsAny(., a[a$type == "five_prime_utr"]),
+        three_prime_utr = overlapsAny(., a[a$type == "three_prime_utr"])) %>%
+        dplyr::mutate(intron = ifelse(exon + five_prime_utr + three_prime_utr == 0,
+                                      TRUE, FALSE))
+    }) %>%
+    dplyr::select(seqnames, start, end, strand, gene_id, exon, 
+                  five_prime_utr, three_prime_utr, intron)  %>%
+    dplyr::summarize(exon = sum(exon), five_prime_utr = sum(five_prime_utr),
+                     three_prime_utr = sum(three_prime_utr), intron = sum(intron), 
+                     total = n()) 
+  
+  m <- match(counts_per_gene$gene_id, gtf[gtf$type == "gene"]$gene_id)
+  ## add the gene location, the name and biotype to the list
+  counts_per_gene <- cbind(counts_per_gene, 
+                           seqnames = seqnames(gtf[gtf$type == "gene"][m]), 
+                           start = start(gtf[gtf$type == "gene"][m]), 
+                           end = end(gtf[gtf$type == "gene"][m]),
+                           mcols(gtf[gtf$type == "gene"][m, c("gene_name", 
+                                                              "gene_biotype")]))
+  counts_per_gene <- counts_per_gene %>%
+    as.data.frame() %>% 
+    dplyr::select(gene_id, seqnames, start, end, gene_name, gene_biotype, exon, 
+                  five_prime_utr, three_prime_utr, intron, total)
+  ## Sort after number of exonic and 3'UTR peaks per gene
+  sorted <- counts_per_gene[order(counts_per_gene$exon, 
+                                  counts_per_gene$three_prime_utr, 
+                                  counts_per_gene$five_prime_utr, 
+                                  counts_per_gene$total, decreasing = TRUE), ]
+  write.table(sorted, 
+              file = outfile, 
+              sep = "\t", quote = FALSE, row.names = FALSE)
+}
+
+if (!all(file.exists(c(file.path(out_dir_top, 
+                                 paste0("SNS_70K_peaks_per_gene_region_cutoff", 
+                                        cutoff, ".txt")), 
+                       file.path(out_dir_top, 
+                                 paste0("HOMO_70K_peaks_per_gene_region_cutoff", 
+                                        cutoff, ".txt")) 
+                       )))) {
+  write_gene_list("SNS_70K", gtf, omni_top, 
+                  file.path(out_dir_top, 
+                            paste0("SNS_70K_peaks_per_gene_region_cutoff", 
+                                   cutoff, ".txt")))
+  write_gene_list("HOMO_70K", gtf, omni_top,  
+                  file.path(out_dir_top, 
+                            paste0("HOMO_70K_peaks_per_gene_region_cutoff", 
+                                   cutoff, ".txt")))
+}
+
+## plot the location of the top peaks
+peak_location_barplot(omni = omni_top, 
+                      filepath = file.path(out_dir_top, 
+                              paste0("barplot_peak_location_percentage_cutoff", 
+                                     cutoff, ".pdf")))
+
+### write BED files with the top peaks
+for (sample in c("HOMO_70K", "SNS_70K")){
+  rtracklayer::export(object = omni_top[[sample]], 
+                      file.path(out_dir_top, paste0("omniCLIP_", sample, 
+                                                    "_cutoff", cutoff, ".bed")))
+}
+
+# We combine the SNS gene list with the homogenate gene list, because we want to
+# know how strong the binding in the homogenate sample is, compare to SNS.
+sns_list <- read.table(file = file.path(out_dir_top,
+                                        paste0("SNS_70K",
+                                               "_peaks_per_gene_region",
+                                               "_cutoff", as.character(cutoff),
+                                               ".txt")),
+                       header = TRUE, sep = "\t")
+homo_list <- read.table(file = file.path(out_dir_top,
+                                         paste0("HOMO_70K",
+                                                "_peaks_per_gene_region",
+                                                "_cutoff", as.character(cutoff),
+                                                ".txt")),
+                        header = TRUE, sep = "\t")
+
+sns_list %>%
+  dplyr::left_join(homo_list, by = c("gene_id", "seqnames", "start", "end",
+                                     "gene_name", "gene_biotype"),
+                   suffix = c("_sns", "_homogenate")) %>%
+  replace(., is.na(.), 0) %>%
+  write.table(., file = file.path(out_dir_top,
+                                  paste0("SNS_70K_peaks_per_gene_region",
+                                         "_cutoff", as.character(cutoff),
+                                         "_homogenate_peaks.txt")),
+              sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+## What is the correlation between the gene expression and the peak score (SiteScore)?
+
+```{r CLIP_coverage, cache = 2}
+## for all genes that contain one of the top peaks, we plot the gene expression 
+## (TPM) vs. the peak strength (mean/max number of reads in peak)
+
+## data.frame with all genes, tpm and the peak strength
+## read CLIP-seq BAM files to get genome coverage 
+cov <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  ga <- readGAlignmentPairs(here("BAM_deduplicated", sample, 
+                                 paste0(sample, "_deduplicated.bam")))
+  cov[[sample]] <- coverage(ga)
+  rm(ga)
+  gc()
+}
+```
+
+```{r gene_expression_vs_peak_score, cache = 2, warning = FALSE}
+tpms <- tpms %>%
+  as.data.frame %>%
+  dplyr::mutate(gene_id = rownames(.)) 
+
+## Function that computes the mode of a vector
+## If there are multiple values with the same occurrence, the first one is picked
+get_mode <- function(v) {
+  uniqv <- unique(v)
+  as.integer(names(table(v))[which.max(table(v))])
+}
+
+if (!exists(file.path(out_dir_top, "df_full.RDS"))) {
+  df_list <- list()
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    df_list[[sample]] <- 
+      data.frame(sample = sample,
+                 gene_id = omni_top[[sample]]$gene_id,
+                 max_coverage = max(cov[[sample]][omni_top[[sample]]]),
+                 mean_coverage = round(mean(cov[[sample]][omni_top[[sample]]]), 
+                                       digits = 2),
+                 mode_coverage = sapply(cov[[sample]][omni_top[[sample]]], 
+                                        get_mode))
+  }
+  df <- bind_rows(df_list)
+  
+  ## Compute the data.frame for the full set of peaks and highlight the top peaks
+  ## The computation of the mode takes too long, so we do not plot it
+  df_full_list <- list()
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    print(sample)
+    omni[[sample]]$cutoff <- omni[[sample]]$name %in% 
+      unique(omni_top[[sample]]$name)
+    df_full_list[[sample]] <- 
+      data.frame(sample = sample, gene_id = omni[[sample]]$gene_id,
+                 max_coverage = max(cov[[sample]][omni[[sample]]]), 
+                 mean_coverage = round(mean(cov[[sample]][omni[[sample]]]), 
+                                       digits = 2),
+                 top_peak = omni[[sample]]$cutoff)
+  }
+  df_full <- bind_rows(df_full_list)
+  
+  ## merge the peak df with the tpms
+  df <- df %>%
+    dplyr::left_join(., tpms, by = c("gene_id")) %>%
+    gather(data = ., key = "RNA_seq", value = "TPM", WT_Homo_S1:WT_SNS_S3) %>%
+    dplyr::filter(!is.na(TPM))
+  
+  df_full <- df_full %>%
+    dplyr::left_join(., tpms, by = c("gene_id")) %>%
+    gather(data = ., key = "RNA_seq", value = "TPM", WT_Homo_S1:WT_SNS_S3) %>%
+    dplyr::filter(!is.na(TPM))
+  
+  ## add the gene names
+  df$gene_name <- gtf$gene_name[match(df$gene_id, gtf$gene_id)]
+  df_full$gene_name <- gtf$gene_name[match(df_full$gene_id, gtf$gene_id)]
+  
+  saveRDS(df_full, file.path(out_dir_top, "df_full.RDS"))
+} else {
+  readRDS(file.path(out_dir_top, "df_full.RDS"))
+}
+```
+
+```{r gene_expression_vs_peak_score_plotting, warning = FALSE, cache = 2}
+## Plotting
+plot_peak_strength_tpm <- function(df, y_col = "max_coverage", outfile, 
+                                   wrap_col = "RNA_seq", log = FALSE, 
+                                   col = NULL){
+  p <- ggplot(df, aes_string(x = "TPM", y = y_col)) +
+    geom_point(alpha = 0.3, if (!is.null(col)) {aes_string(color = col)}) +
+    theme_bw() +
+    facet_wrap(~ get(wrap_col)) +
+    guides(color=guide_legend(title=paste0("score >= ", cutoff)))
+  if (log) {
+    p <- p +
+      scale_x_continuous(trans='log10') + 
+      scale_y_continuous(trans="log10")
+  }
+  p
+  # ggsave(file.path(out_dir_top, outfile), p, width = 8, height = 4) 
+}
+
+
+df_full_sns <- df_full[df_full$sample == "SNS_70K" & df_full$RNA_seq %in% 
+                       c("WT_SNS_S1", "WT_SNS_S2", "WT_SNS_S3"),]
+
+plot_peak_strength_tpm(df_full_sns, y_col = "max_coverage",
+                       "SNS_70K_all_peaks_gene_tpm_vs_peak_max_cov_log10.png",
+                       log = TRUE, col = "top_peak" )
+plot_peak_strength_tpm(df_full_sns, y_col = "max_coverage",
+                       "SNS_70K_all_peaks_gene_tpm_vs_peak_max_cov.png",
+                       log = FALSE, col = "top_peak" )
+
+plot_peak_strength_tpm(df_full_sns, y_col = "mean_coverage",
+                       "SNS_70K_all_peaks_gene_tpm_vs_peak_mean_cov_log10.png",
+                       log = TRUE, col = "top_peak" )
+plot_peak_strength_tpm(df_full_sns, y_col = "mean_coverage",
+                       "SNS_70K_all_peaks_gene_tpm_vs_peak_mean_cov.png",
+                       log = FALSE, col = "top_peak" )
+
+# ## only sample S1 (for email to Phillipp)
+# df_full_sns1 <- df_full[df_full$sample == "SNS_70K" & 
+#                           df_full$RNA_seq == "WT_SNS_S1",]
+# p <- ggplot(df_full_sns1, aes(x = TPM, y = mean_coverage)) +
+#   geom_point(alpha = 0.3, aes(color = top_peak)) +
+#   theme_bw() +
+#   scale_x_continuous(trans='log10') + 
+#   scale_y_continuous(trans="log10") +
+#   guides(color=guide_legend(title="score <= 1e-06"))
+# p
+# ggsave(file.path(out_dir, 
+#                  "SNS_70K_all_peaks_gene_tpm_S1_vs_peak_mean_cov_log10.png"), 
+#        p, width = 5, height = 4) 
+# 
+# df_full_homo <- df_full[df_full$sample == "HOMO_70K" & df_full$RNA_seq %in% 
+#                           c("WT_Homo_S1", "WT_Homo_S2_1"),]
+# 
+# plot_peak_strength_tpm(df_full_homo, y_col = "max_coverage",
+#                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_max_cov_log10.png",
+#                        log = TRUE, col = "top_peak" )
+# plot_peak_strength_tpm(df_full_homo, y_col = "max_coverage",
+#                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_max_cov.png",
+#                        log = FALSE, col = "top_peak" )
+# plot_peak_strength_tpm(df_full_homo, y_col = "mean_coverage",
+#                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_mean_cov_log10.png",
+#                        log = TRUE, col = "top_peak" )
+# plot_peak_strength_tpm(df_full_homo, y_col = "mean_coverage",
+#                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_mean_cov.png",
+#                        log = FALSE, col = "top_peak" )
+
+df_sns <- df[df$sample == "SNS_70K" & df$RNA_seq %in% 
+             c("WT_Homo_S1", "WT_Homo_S2_1"),]
+
+plot_peak_strength_tpm(df_sns, y_col = "max_coverage",
+                       "SNS_70K_gene_tpm_vs_peak_max_cov_log10.png",
+                       log = TRUE)
+plot_peak_strength_tpm(df_sns, y_col = "max_coverage",
+                       "SNS_70K_gene_tpm_vs_peak_max_cov.pdf")
+plot_peak_strength_tpm(df_sns, y_col = "mean_coverage",
+                       "SNS_70K_gene_tpm_vs_peak_mean_cov_log10.png",
+                       log = TRUE)
+plot_peak_strength_tpm(df_sns, y_col = "mean_coverage",
+                       "SNS_70K_gene_tpm_vs_peak_mean_cov.pdf")
+plot_peak_strength_tpm(df_sns, y_col = "mode_coverage",
+                       "SNS_70K_gene_tpm_vs_peak_mode_cov_log10.png",
+                       log = TRUE)
+plot_peak_strength_tpm(df_sns, y_col = "mode_coverage",
+                       "SNS_70K_gene_tpm_vs_peak_mode_cov.pdf")
+# 
+# df_homo <- df[df$sample == "HOMO_70K" & df$RNA_seq %in% 
+#                 c("WT_Homo_S1", "WT_Homo_S2_1"),]
+# 
+# plot_peak_strength_tpm(df_homo, y_col = "max_coverage",
+#                        "HOMO_70K_gene_tpm_vs_peak_max_cov_log10.png",
+#                        log = TRUE)
+# plot_peak_strength_tpm(df_homo, y_col = "max_coverage",
+#                        "HOMO_70K_gene_tpm_vs_peak_max_cov.pdf")
+# plot_peak_strength_tpm(df_homo, y_col = "mean_coverage",
+#                        "HOMO_70K_gene_tpm_vs_peak_mean_cov_log10.png",
+#                        log = TRUE)
+# plot_peak_strength_tpm(df_homo, y_col = "mean_coverage",
+#                        "HOMO_70K_gene_tpm_vs_peak_mean_cov.pdf")
+# plot_peak_strength_tpm(df_homo, y_col = "mode_coverage",
+#                        "HOMO_70K_gene_tpm_vs_peak_mode_cov_log10.png",
+#                        log = TRUE)
+# plot_peak_strength_tpm(df_homo, y_col = "mode_coverage",
+#                        "HOMO_70K_gene_tpm_vs_peak_mode_cov.pdf")
+
+
+
+### save interactive figure with plotly
+plot_peak_strength_tpm_plotly <- function(df, y_col = "max_coverage", outfile, 
+                                          wrap_col = "RNA_seq", log = FALSE){
+  p <- ggplot(df, aes(x = TPM, y = get(y_col), 
+                      text = paste("gene_name: ", gene_name))) +
+    geom_point(alpha = 0.3) +
+    theme_bw() +
+    facet_wrap(~ get(wrap_col))
+  if (log) {
+    p <- p +
+      scale_x_continuous(trans='log10') + 
+      scale_y_continuous(trans="log10")
+  }
+  p <- ggplotly(p)
+  htmlwidgets::saveWidget(as_widget(p), file = file.path(out_dir_top, outfile))
+}
+
+
+# plot_peak_strength_tpm_plotly(df_sns, y_col = "max_coverage",
+#                        "SNS_70K_gene_tpm_vs_peak_max_cov.html",
+#                        log = FALSE)
+# plot_peak_strength_tpm_plotly(df_sns, y_col = "max_coverage",
+#                        "SNS_70K_gene_tpm_vs_peak_max_cov_log10.html",
+#                        log = TRUE)
+# plot_peak_strength_tpm_plotly(df_sns, y_col = "mean_coverage",
+#                               "SNS_70K_gene_tpm_vs_peak_mean_cov.html",
+#                               log = FALSE)
+# plot_peak_strength_tpm_plotly(df_sns, y_col = "mean_coverage",
+#                               "SNS_70K_gene_tpm_vs_peak_mean_cov_log10.html",
+#                               log = TRUE)
+# 
+# plot_peak_strength_tpm_plotly(df_homo, y_col = "max_coverage",
+#                               "HOMO_70K_gene_tpm_vs_peak_max_cov.html",
+#                               log = FALSE)
+# plot_peak_strength_tpm_plotly(df_homo, y_col = "max_coverage",
+#                               "HOMO_70K_gene_tpm_vs_peak_max_cov_log10.html",
+#                               log = TRUE)
+# plot_peak_strength_tpm_plotly(df_homo, y_col = "mean_coverage",
+#                               "HOMO_70K_gene_tpm_vs_peak_mean_cov.html",
+#                               log = FALSE)
+# plot_peak_strength_tpm_plotly(df_homo, y_col = "mean_coverage",
+#                               "HOMO_70K_gene_tpm_vs_peak_mean_cov_log10.html",
+#                               log = TRUE)
+```

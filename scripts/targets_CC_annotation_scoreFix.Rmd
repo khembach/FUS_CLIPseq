@@ -1,0 +1,577 @@
+---
+title: "Cellular localisation of FUS targets (fixed score)"
+author: "Katharina Hembach"
+date: "5/28/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+```{r packages, warning = FALSE, message = FALSE}
+library(here)
+library(rtracklayer)
+library(tximport)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(biomaRt)
+library(biomartr)
+library(GO.db)
+library(pathview)
+library(org.Mm.eg.db)
+library(annotate)
+library(ggraph)
+library(igraph)
+library(viridis)
+library(data.tree)
+library(edgeR)
+library(goSTAG)
+```
+
+# Reading omniCLIP peaks
+
+We read the top peaks and and filter the top peaks based on score.
+
+```{r omniCLIP, cache = 2}
+## here sets the root directory to the github directory at
+## "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018"
+
+# out_dir <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018/analysis/deduplicated/clipper_omniCLIP_qc"
+# out_dir1 <- "/home/Shared/data/seq/sonu_CLIPseq/clip_March2018/analysis/omniCLIP/ribo0"
+
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+out_dir_top <- here("analysis", "omniCLIP", "scoreFix", "top_100")
+
+metadat <- read.table(here("metadata.txt"), header = TRUE)
+gtf <- import(gtf_file)
+cutoff <- 100
+
+###### Read the CLIP peaks -----------------------------------------------------
+omni <- list()
+for (i in c(1, 3)) {
+  sample <- as.character(metadat$ID[i])
+  omni[[sample]] <- import(here("omniCLIP", paste0(sample, "_scoreFix"), 
+                                paste0(sample,"_bg_", metadat$group[i], 
+                                       "_scoreFix_pred.bed")))
+  omni[[sample]]$gene_id <- str_split(omni[[sample]]$name, "_", simplify = TRUE)[,1]
+}
+
+### filter top peaks
+omni_filtered <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  omni_filtered[[sample]] <- omni[[sample]][omni[[sample]]$score >= cutoff]
+}
+```
+
+
+# Salmon gene expression estimates
+
+```{r salmon, cache = 2}
+## new bias corrected Salmon quantifications
+salmon_base_dir <- "/home/Shared/data/seq/sonu_RNAseq/"
+salmon_dir_name <- "salmon_bias"
+
+samples <- list.files(file.path(salmon_base_dir, salmon_dir_name), 
+                      pattern = "^20170214.B-WT*")
+files <- file.path(file.path(salmon_base_dir, salmon_dir_name), 
+                   samples, "quant.sf")
+samples <- str_split(samples, pattern = "-", simplify = TRUE)[ ,2]
+samples <- gsub(pattern = "_R1", replacement = "", x = samples)
+names(files) <-  samples
+grp <- str_split(samples, pattern = "_", simplify = TRUE)
+grp <- as.factor(paste0(grp[ ,1], "_", grp[ ,2]))
+sample_nr <- str_split(samples, pattern = "_", simplify = TRUE)[,3]
+
+tx2gene<- unique(mcols(gtf)[c("transcript_id", "gene_id")])
+tx2gene <- tx2gene[!is.na(tx2gene$transcript_id), ]
+tx2gene <- tx2gene[order(tx2gene$transcript_id), ]
+## gene level counts
+txi <- tximport(files, type="salmon", txIn = TRUE, tx2gene = tx2gene, 
+                txOut=FALSE, countsFromAbundance = "no", ignoreTxVersion = TRUE)  
+tpms <- txi$abundance  # tpm per gene
+
+counts <- round(txi$counts)
+cts <- counts[rowSums(is.na(counts)) == 0, ]
+
+## add average transcript lengths as offset
+normMat <- txi$length[match(rownames(cts), rownames(txi$length)),
+                              match(colnames(cts), colnames(txi$length))]
+normMat <- normMat/exp(rowMeans(log(normMat)))
+o <- log(calcNormFactors(cts/normMat)) + log(colSums(cts/normMat))
+y0 <- DGEList(counts=cts, group=grp)
+y0$offset <- t(t(log(normMat)) + o)
+y0 <- calcNormFactors(y0)
+```
+
+
+<!-- 
+# Cellular component annotation of the top peaks
+
+Using Biomart.
+
+```{r biomart_annotation, cache = 2, warning = FALSE, eval = FALSE}
+### We want GO term "synapse" and then all children 
+## (the different types of synapses)
+## We need the GO terms for our target genes
+go_tbl_sns <- biomartr::getGO(organism = "Mus musculus", 
+                          genes    = unique(omni_filtered[["SNS_70K"]]$gene_id),
+                          filters  = "ensembl_gene_id")
+
+ensembl <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+## go annotation for all target genes
+go_ids <- getBM(attributes = c("ensembl_gene_id", "go_id"), 
+                values = unique(omni_filtered[["SNS_70K"]]$gene_id), 
+                mart = ensembl)
+## we only keep the genes from our initial list
+go_ids <- go_ids[go_ids$ensembl_gene_id %in% unique(omni_filtered[["SNS_70K"]]$gene_id), ]
+## remove all rows with go_id = ""  (no GO annotation for these IDs)
+go_ids <- go_ids[go_ids$go_id != "",]
+
+## GO database with all children per node
+goccc <- as.list(GO.db::GOCCCHILDREN)
+go_synapse <- "GO:0045202"
+## all childern of synapse
+goccc[[go_synapse]]
+
+## GO term annotation as list
+goterm <- as.list(GO.db::GOTERM)
+goterm[[go_synapse]]
+
+## get all genes with annotation "synapse"
+syn_genes <- go_ids[go_ids$go_id == go_synapse,] %>% pull(ensembl_gene_id) 
+length(syn_genes)
+## how many genes do not have CC "synapse"?
+unique(go_ids$ensembl_gene_id) %>% length() - length(syn_genes)
+
+## annotation for all genes with CC "synapse)
+go_ids_syn <- go_ids[go_ids$ensembl_gene_id %in% syn_genes,]
+## we add the gene_name to the table
+go_ids_syn$gene_name <- gtf$gene_name[match(go_ids_syn$ensembl_gene_id, 
+                                            gtf$gene_id)]
+## The genes with annotation synapse
+unique(go_ids_syn$gene_name)
+
+## add the GO term description
+## some go ids do not have a GO term description!
+go_ids_syn$go_term <- sapply(goterm[go_ids_syn$go_id], Term)
+
+## all children of "synapse"
+go_ids_syn[go_ids_syn$go_id %in% goccc[[go_synapse]],] %>% dim()
+go_ids_syn[go_ids_syn$go_id %in% goccc[[go_synapse]],] %>% 
+  pull(go_term) %>%
+  table()
+
+go_ids_syn_child <- go_ids_syn[go_ids_syn$go_id %in% goccc[[go_synapse]],]
+
+write.table(x = go_ids_syn_child, 
+            file = file.path(out_dir_top, 
+                      "SNS_70K_cutoff1e-04_GO_synapse_child_annotation.txt"), 
+            row.names = FALSE, sep = "\t", quote = FALSE)
+
+## barplot with the synaptic annotation
+p <- ggplot(go_ids_syn_child, aes(x = go_term)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p
+# ggsave(file.path(out_dir_top, "SNS_70K_cutoff_1e-04_GO_annotation.pdf"), 
+#        p, width = 4, height = 4) 
+```
+--> 
+
+# GO CC annotation with org.Mm.eg.db
+
+```{r cc_annotation, cache = 2}
+sns_target_genes <- unique(omni_filtered[["SNS_70K"]]$gene_id)
+
+## mapping of mouse gene ids to GO terms
+
+## convert Ensembl Gene IDs to Entrez gene ids
+sns_entrez <- unlist(as.list(org.Mm.egENSEMBL2EG)[sns_target_genes])
+length(sns_entrez)
+
+## map all Entrez gene ids to GO terms
+tmp <- mget(sns_entrez, org.Mm.egGO)
+## filter annotation based on evidence codes
+## remove all annotations that are based on elctronic annotation (IEA) 
+## (not manually checked)
+tmp1 <- lapply(tmp, dropECode, code = "IEA")
+
+## select the CC annotation
+tmp2 <- lapply(tmp1, getOntology, ontology = "CC")
+
+## how many annotations per gene?
+sapply(tmp2, length) %>% summary
+
+## transform the list to a data.frame with columns:
+## Entrez ID and GO term
+go <- data.frame(entrez = unlist(sapply(names(tmp2), function(x) 
+                                                  rep(x, length(tmp2[[x]])))),
+                 GO_IDs = unlist(tmp2), stringsAsFactors = FALSE)
+## add the Term
+go$term <- Term(go$GO_IDs)
+## add the gene name
+go$gene_name <- AnnotationDbi::select(org.Mm.eg.db, keys=go$entrez, 
+                                      column = "SYMBOL", 
+                                      keytype = "ENTREZID")[["SYMBOL"]]
+
+go %>%
+  group_by(term) %>%
+  summarise(n = n())
+
+#### Traverse the full tree to search for parent annotations
+## per gene, add list of all ancestor terms to table 
+
+go_searchs <- list(synapse = "GO:0045202", 
+                  intracellular_membrane_bounded_organelle = "GO:0043231",
+                  extracellular_region = "GO:0005576",
+                  neuron_part = "GO:0097458",
+                  GABA_ergic_synapse = "GO:0098982",
+                  glutamatergic_synapse = "GO:0098978",
+                  cholinergic_synapse = "GO:0098981",
+                  dopaminergic_synapse = "GO:0098691",
+                  endoplasmic_reticulum = "GO:0005783",
+                  mitochondrion = "GO:0005739",
+                  nucleus = "GO:0005634",
+                  postsynapse = "GO:0098794",
+                  presynapse = "GO:0098793"
+                  )
+
+goccanc <- as.list(GO.db::GOCCANCESTOR)
+
+get_ancestors <- Vectorize(function(go_id){
+  c(go_id, unlist(goccanc[[go_id]]))
+})
+
+go <- go %>% 
+  as_tibble() %>%
+  mutate(ancestors = get_ancestors(GO_IDs)) 
+
+## check for the different terms
+go <- go %>%
+  rowwise() %>%
+  mutate(is_synapse = go_searchs[["synapse"]] %in% ancestors,
+         is_intracellular_membrane_bounded_organelle = 
+           go_searchs[["intracellular_membrane_bounded_organelle"]] %in% ancestors,
+         is_extracellular_region = go_searchs[["extracellular_region"]] %in% ancestors,
+         is_neuron_part = go_searchs[["neuron_part"]] %in% ancestors,
+         is_GABA_ergic_synapse = go_searchs[["GABA_ergic_synapse"]] %in% ancestors,
+         is_glutamatergic_synapse = go_searchs[["glutamatergic_synapse"]] %in% ancestors,
+         is_cholinergic_synapse = go_searchs[["cholinergic_synapse"]] %in% ancestors,
+         is_dopaminergic_synapse = go_searchs[["dopaminergic_synapse"]] %in% ancestors,
+         is_endoplasmic_reticulum = go_searchs[["endoplasmic_reticulum"]] %in% ancestors,
+         is_mitochondrion = go_searchs[["mitochondrion"]] %in% ancestors,
+         is_nucleus = go_searchs[["nucleus"]] %in% ancestors,
+         is_postsynapse = go_searchs[["postsynapse"]] %in% ancestors,
+         is_presynapse = go_searchs[["presynapse"]] %in% ancestors
+         ) 
+
+##
+golong <- gather(go, location, is_inside, 6:18)
+catCount <- golong %>% 
+  group_by(entrez,location) %>% 
+  summarise(is_inside = any(is_inside)) %>% 
+  group_by(location) %>% 
+  summarise(n=sum(is_inside))
+catCount
+
+## how many genes have annotation "synapse"?
+go[go$GO_IDs %in% go_searchs["synapse"],] %>% 
+  nrow()
+## how many genes do not have a GO annotation:
+CC_unknown <-  sum(lengths(tmp2) == 0)
+CC_unknown
+## how many genes could not be mapped to Entrez IDs:
+unmapped_ID <- length(sns_target_genes) - length(sns_entrez)
+unmapped_ID
+```
+
+## Visualization of CC categories
+
+We visualise the results using the ggraph package from R: circlepacking and partition plot.
+
+```{r cc_plotting, cache = 2, warning = FALSE}
+from  <- c(rep("target_genes", 7), 
+           rep("synapse", 4), 
+           rep("intracellular_membrane_bounded_organelle", 3), 
+           "neuron_part")
+
+to <- c("unmapped_ID", "CC_unknown", "synapse", "intracellular_membrane_bounded_organelle", "extracellular_region", "neuron_part", "postsynapse",
+        "GABA_ergic_synapse", "glutamatergic_synapse", "cholinergic_synapse", "dopaminergic_synapse",
+        "endoplasmic_reticulum", "mitochondrion", "nucleus",
+        "presynapse")
+edges <- data.frame(from = from, to = to,stringsAsFactors = FALSE)
+
+vertices <- catCount
+vertices <- vertices %>% 
+  dplyr::rename(name = location, size = n) %>%
+  mutate(name = substring(name, 4)) %>%
+  rbind(c("target_genes", length(sns_target_genes))) %>%
+  rbind(c("unmapped_ID", unmapped_ID)) %>%
+  rbind(c("CC_unknown", CC_unknown)) %>%
+  mutate(size = as.numeric(size)) %>%
+  as.data.frame()
+
+# write.table(vertices, file.path(out_dir1, "SNS_70K_GO_CC_category_counts.txt"),
+#             sep = "\t", row.names = FALSE, quote = FALSE)
+
+## Filter the categories with 0 genes
+vsn = vertices %>% dplyr::filter(size>0)
+esn = edges %>% dplyr::filter(from %in% vsn$name & to %in% vsn$name)
+
+mygraph <- graph_from_data_frame(esn, vertices= vsn)
+
+p <- ggraph(mygraph, layout = 'circlepack', weight="size" ) + 
+  geom_node_circle(aes(fill = as.factor(depth), color = as.factor(depth))) +
+  geom_node_label( aes(label=name, size=size), repel = TRUE) +
+  theme_void() + 
+  theme(legend.position="FALSE") + 
+  scale_fill_manual(values=c("0" = "white", "1" = viridis(3)[1], "2" = viridis(3)[2])) +
+  scale_color_manual( values=c("0" = "white", "1" = "black", "2" = "black") ) 
+p
+# ggsave(file.path(out_dir1, "SNS_70K_GO_CC_circlepack.pdf"), p, 
+#        width = 5, height = 5) 
+
+## Hide the root label
+# Transform it into a 'tree' format
+tree <- FromDataFrameNetwork(edges)
+
+# Then I can easily get the level of each node, and add it to the initial data frame:
+mylevels=data.frame( name=tree$Get('name'), level=tree$Get("level") )
+vertices = vertices %>% left_join(., mylevels, by=c("name"="name"))
+
+# Now we can add label for level1 and 2 only for example:
+vertices = vertices %>% mutate(new_label=ifelse(level==1, NA, name))
+
+vsn = vertices %>% dplyr::filter(size>0)
+esn = edges %>% dplyr::filter(from %in% vsn$name & to %in% vsn$name)
+mygraph <- graph_from_data_frame( esn, vertices=vsn)
+
+
+p <- ggraph(mygraph, layout = 'circlepack', weight="size" ) + 
+  geom_node_circle(aes(fill = depth)) +
+  geom_node_label( aes(label=new_label, size=size), repel = TRUE) +
+  theme_void() + 
+  theme(legend.position="FALSE") + 
+  scale_fill_viridis()
+p
+# ggsave(file.path(out_dir1, "SNS_70K_GO_CC_circlepack_label.pdf"), p, 
+#        width = 5, height = 5) q
+  
+
+### partition
+## TODO
+## add 2nd level to neuron_part otherwise the sizes are not correct 
+## (at least 2 categories per level)
+
+p <- ggraph(mygraph, 'partition', weight = "size", circular = TRUE) + 
+  geom_node_arc_bar(aes(fill = depth)) +
+  geom_node_label( aes(label=new_label), repel = TRUE) +
+  theme_void() +
+  theme(legend.position="none")
+p
+# ggsave(file.path(out_dir1, "SNS_70K_GO_CC_partition.pdf"), p, 
+#        width = 5, height = 5) 
+
+```
+
+# GO annotation over-representation analysis
+## SNS targets
+
+Which GO CC annotations are over-represented among our target genes? We use the `goana()` function from the `limma` package. The returned p-values are unadjusted for multiple testing, because GO terms and KEGG pathways are often overlapping, so standard methods may be very conservative. The authors suggest taht only very small p-values should be used for publications. Gordon Smyth said the following [online](https://support.bioconductor.org/p/74899/): "Yes, the p-values need adjustment in principle, but I prefer to do this informally -- I only take notice of p-values that are less than 1e-8 and preferably smaller."
+
+`goana` computes one-sided hypergeometric tests. The returned values are the following:
+
+* `Term`: the GO term
+* `N`: the number if genes in the GO term
+* `DE`: number of genes in the target set
+* `P.DE`: p-value for over-representation of the GO term in the set.
+
+```{r go_enrichment_sns, cache = 2}
+sns_target_genes <- unique(omni_filtered[["SNS_70K"]]$gene_id)
+
+## convert the Ensembl Gene IDs to entrez Gene IDs with Biomart
+ensembl <- useMart("ensembl")
+ensembl <- useDataset("mmusculus_gene_ensembl", mart = ensembl)
+entrez_sns <- getBM(attributes = c("ensembl_gene_id","entrezgene"), 
+             values = sns_target_genes, mart = ensembl )
+## we only keep the genes from our initial list
+entrez_sns <- entrez_sns[entrez_sns$ensembl_gene_id %in% sns_target_genes, ]
+
+## Not all mRNAs are present in the SNS sample, so we take all expressed genes 
+## >=1cpm in RNA-seq as background.
+## We only consider the first two replicates, because of the coverage profile
+## issue with sample 3
+y0_sns <- y0[,c(3, 4)]
+keep <- rowSums(cpm(y0_sns)>1) == 2 
+y_sns <- y0_sns[keep, , keep.lib.sizes = FALSE]
+dim(y_sns)
+sns_bg <- rownames(y_sns)
+
+## convert to Entrez IDs
+sns_bg_entrez <- getBM(attributes = c("ensembl_gene_id","entrezgene"), 
+             values = sns_bg, mart = ensembl )
+sns_bg_entrez <- sns_bg_entrez[sns_bg_entrez$ensembl_gene_id %in% sns_bg, ]
+
+## GO analysis with goana 
+goana_sns <- goana(de = unique(entrez_sns$entrezgene), species = "Mm",
+                   universe = sns_bg_entrez$entrezgene)
+goana_sns <- goana_sns[order(goana_sns$P.DE, decreasing = FALSE),]
+## What are the most enriched annotation terms?
+topGO(goana_sns, ontology = "CC", number = 10)
+
+# What are the genes that have annotation "synapse"?
+# x <- org.Mm.egGO2ALLEGS
+# Rkeys(x) <- "GO:0045202"
+# EG <- mappedLkeys(x)
+# intersect(EG, entrez_sns$entrezgene)
+
+## Match gene length to bg list
+genes <- gtf[gtf$type == "gene"]
+m <- match(sns_bg_entrez$ensembl_gene_id, genes$gene_id)
+gene_length <- width(genes)[m]
+## using gene length as covariate
+goana_sns <- goana(de = unique(entrez_sns$entrezgene), species = "Mm", 
+                   universe = sns_bg_entrez$entrezgene, covariate = gene_length)
+goana_sns <- goana_sns[order(goana_sns$P.DE, decreasing = FALSE),]
+## What are the most enriched annotation terms?
+topGO(goana_sns, ontology = "CC", number = 20)
+topGO(goana_sns, ontology = "BP", number = 10)
+topGO(goana_sns, ontology = "MF", number = 10)
+
+write.table(topGO(goana_sns, ontology = "CC", number = 100), 
+            file.path(out_dir_top, "GO_ORA", "SNS_70K_goana_CC.txt"),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_sns, ontology = "BP", number = 100), 
+            file.path(out_dir_top, "GO_ORA", "SNS_70K_goana_BP.txt"),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_sns, ontology = "MF", number = 100), 
+            file.path(out_dir_top, "GO_ORA", "SNS_70K_goana_MF.txt"),
+            sep = "\t", quote = FALSE)
+```
+
+## Homogenate targets
+
+```{r go_enrichment_homogenate, cache = 2}
+## What are the homogenate FUS targets enriched for?
+homo_target_genes <- unique(omni_filtered[["HOMO_70K"]]$gene_id)
+
+## convert the Ensembl Gene IDs to entrez Gene IDs with Biomart
+ensembl <- useMart("ensembl")
+ensembl <- useDataset("mmusculus_gene_ensembl", mart = ensembl)
+entrez_homo <- getBM(attributes = c("ensembl_gene_id","entrezgene"), 
+             values = homo_target_genes, mart = ensembl )
+## we only keep the genes from our initial list
+entrez_homo <- entrez_homo[entrez_homo$ensembl_gene_id %in% homo_target_genes, ]
+
+## Correct for gene length
+y0_homo <- y0[,grep("WT_Homo", colnames(y0))]
+keep <- rowSums(cpm(y0_homo)>1) == 2 
+y_homo <- y0_homo[keep, , keep.lib.sizes = FALSE]
+dim(y_homo)
+homo_bg <- rownames(y_homo)
+
+## convert to Entrez IDs
+homo_bg_entrez <- getBM(attributes = c("ensembl_gene_id","entrezgene"), 
+             values = homo_bg, mart = ensembl )
+homo_bg_entrez <- homo_bg_entrez[homo_bg_entrez$ensembl_gene_id %in% sns_bg, ]
+
+goana_homo <- goana(de = unique(entrez_homo$entrezgene), species = "Mm", 
+                   universe = homo_bg_entrez$entrezgene)
+goana_homo <- goana_homo[order(goana_homo$P.DE, decreasing = FALSE),]
+## What are the most enriched annotation terms?
+topGO(goana_homo, ontology = "CC", number = 10)
+
+## Match gene length to bg list
+m <- match(homo_bg_entrez$ensembl_gene_id, genes$gene_id)
+gene_length <- width(genes)[m]
+## using gene length as covariate
+goana_homo <- goana(de = unique(entrez_homo$entrezgene), species = "Mm", 
+                   universe = homo_bg_entrez$entrezgene, 
+                   covariate = gene_length)
+goana_homo <- goana_homo[order(goana_homo$P.DE, decreasing = FALSE),]
+## What are the most enriched annotation terms?
+topGO(goana_homo, ontology = "CC", number = 10)
+topGO(goana_homo, ontology = "BP", number = 10)
+topGO(goana_homo, ontology = "MF", number = 10)
+
+write.table(topGO(goana_homo, ontology = "CC", number = 100), 
+            file.path(out_dir_top, "GO_ORA", "HOMO_70K_goana_CC.txt"),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_homo, ontology = "BP", number = 100), 
+            file.path(out_dir_top, "GO_ORA", "HOMO_70K_goana_BP.txt"),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_homo, ontology = "MF", number = 100), 
+            file.path(out_dir_top, "GO_ORA", "HOMO_70K_goana_MF.txt"),
+            sep = "\t", quote = FALSE)
+```
+
+
+## Enriched KEGG pachways
+
+```{r kegg_pathway_enrichment, cache = 2}
+## one-sided hypergeometric tests
+
+## SNS
+kegga_sns<- kegga(de = unique(entrez_sns$entrezgene), species = "Mm",
+                   universe = sns_bg_entrez$entrezgene)
+## sort the pathways after raw p-value
+kegga_sns <- kegga_sns[order(kegga_sns$P.DE, decreasing = FALSE),]
+topKEGG(kegga_sns, number = 20)
+write.table(topKEGG(kegga_sns, number = 100), 
+            file.path(out_dir_top, "GO_ORA", "SNS_70K_kegga.txt"),
+            sep = "\t", quote = FALSE)
+
+
+## Homogenate
+kegga_homo <- kegga(de = unique(entrez_homo$entrezgene), species = "Mm",
+                   universe = homo_bg_entrez$entrezgene)
+## sort the pathways after raw p-value
+kegga_homo <- kegga_homo[order(kegga_homo$P.DE, decreasing = FALSE),]
+topKEGG(kegga_homo, number = 20)
+write.table(topKEGG(kegga_homo, number = 100), 
+            file.path(out_dir_top, "GO_ORA", "HOMO_70K_kegga.txt"),
+            sep = "\t", quote = FALSE)
+```
+
+<!-- 
+## KEGG pathway visualization
+
+```{r kegg_pathways, cache = 2, eval = FALSE}
+## We pick the following pathways:
+# 04724 glutamergic
+# 04725 cholinergic
+# 04726 serotonergic
+# 04727 GABAergic
+# 04728 dopaminergic
+## KEGG pathway numbers
+pwlist <- paste0("0",seq(4724,4728))
+sns_target_genes <- unique(omni_filtered[["SNS_70K"]]$gene_id)
+
+# kegg_ids <- getBM(attributes = c("ensembl_gene_id", "kegg_enzyme"), 
+#                 values = sns_target_genes, 
+#                 mart = ensembl)
+# kegg_ids <- kegg_ids[kegg_ids$ensembl_gene_id %in% sns_target_genes, ]
+# ## remove all rows with go_id = ""
+# kegg_ids <- kegg_ids[kegg_ids$kegg_enzyme != "",]
+
+### Pathview visualization of KEGG pathways
+data(gene.idtype.list)
+gene.idtype.list  ## Ensembl IDs are supported
+
+## All genes in the list have the same number (1) associated with them
+pvdata <- rep(1,length(sns_target_genes))
+names(pvdata) <- sns_target_genes
+pv.out <- pathview(gene.data = pvdata, pathway.id = pwlist, species = 'mmu', 
+                   gene.idtype = "ENSEMBL")
+```
+-->
