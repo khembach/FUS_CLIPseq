@@ -48,6 +48,11 @@ Brain:
 SNS:
     bg1: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_SNS_S1_R1_Aligned.sortedByCoord.out.bam"
     bg2: "../../sonu_RNAseq/STAR_Ensembl_GRCm38.90/20170214.B-WT_SNS_S2_R1_Aligned.sortedByCoord.out.bam"
+    
+SNS_ribo0:   
+    bg1: "../../sonu_RNAseq/riboZero_Nov2017/rnaseqworkfow/BAM_deduplicated/WT_SNS_4/WT_SNS_4_deduplicated.bam"
+    bg2: "../../sonu_RNAseq/riboZero_Nov2017/rnaseqworkflow/BAM_deduplicated/WT_SNS_5/WT_SNS_5_deduplicated.bam"
+
 
 ## directory with the genome fasta files: 1 file per chromosome, named <chrNR>.fa.gz, e.g. 1.fa.gz
 genome_dir: ../clip_Nov2017/genome_fasta/

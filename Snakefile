@@ -31,8 +31,12 @@ rule all:
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf", sample = "HOMO_70K", group = "Brain")
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz.tbi", sample = "SNS_70K", group = "SNS"),
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.vcf.gz.tbi", sample = "HOMO_70K", group = "Brain")
-		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "SNS_70K", group = "SNS"),
-		expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "HOMO_70K", group = "Brain")
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "SNS_70K", group = "SNS"),
+		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "HOMO_70K", group = "Brain")
+		# expand("omniCLIP/{sample}_ribo0/{sample}_bg_{group}_ribo0_pred.bed", sample = "SNS_70K", group="SNS_ribo0"),
+		expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "SNS_70K", group="SNS"),
+		expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "HOMO_70K", group="Brain")
+
 
 
 ## FastQC on original (untrimmed) files
@@ -329,6 +333,7 @@ rule create_annotation_DB:
 ## Notes on the omniCLIP installation:
 ## omniCLIP only runs with python 2.7
 ## I thus created a conda environment with python 2.7 and installed omniCLIP there.
+## Remember to set the path to the python2.7 executable (env) in CompileCython.sh
 ## conda create -n omniCLIP_env python=2.7
 ## activate the environment with
 ## source activate omniCLIP_env
@@ -355,7 +360,7 @@ rule omniCLIP:
 		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
 		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
 	output:
-		"omniCLIP/{sample}/{sample}_bg_{group}_pred.bed"
+		protected("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed")
 	conda:
 		"envs/omniCLIP.yaml"
 	threads: config["ncores"]
@@ -372,6 +377,59 @@ rule omniCLIP:
 		# "--use_precomp_diagmod omniCLIP/{wildcards.sample}/IterSaveFile.dat"
 		## this give and error:
 		# "--filter-snps "
+
+rule omniCLIP_scoreFixed:
+	input:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai",
+		anno = config["annotation_DB"],
+		genome_dir = os.path.dirname(config["genome_dir"]),
+		clip = "BAM_deduplicated/{sample}/{sample}_deduplicated.bam",
+		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
+		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
+	output:
+		protected("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed")
+	conda:
+		"envs/omniCLIP.yaml"
+	threads: config["ncores"]
+	shell:
+		"python -W ignore::Warning " + config["omniCLIP_dir"] +"/omniCLIP.py "
+		"--annot {input.anno} --genome-dir {input.genome_dir} "
+		"--clip-files {input.clip} "
+		"--bg-files {input.bg1} --bg-files {input.bg2} "
+		"--out-dir omniCLIP/{wildcards.sample}_scoreFix/ "
+		"--nb-cores {threads} "
+		"--max-it 10; "
+		"mv omniCLIP/{wildcards.sample}_scoreFix/pred.bed omniCLIP/{wildcards.sample}_scoreFix/{wildcards.sample}_bg_{wildcards.group}_scoreFix_pred.bed"
+## Ignore the deprecation warnings. There are tons of them. They all get printed and possibly slow down the computation. 
+## see https://docs.python.org/2.7/library/warnings.html
+## /home/kathi/miniconda3/envs/omniCLIP_env/lib/python2.7/site-packages/h5py/_hl/dataset.py:313: H5pyDeprecationWarning: dataset.value has been deprecated. Use dataset[()] instead.
+## "Use dataset[()] instead.", H5pyDeprecationWarning)
+
+
+rule omniCLIP_ribo0:
+	input:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam.bai",
+		anno = config["annotation_DB"],
+		genome_dir = os.path.dirname(config["genome_dir"]),
+		clip = "BAM_deduplicated/{sample}/{sample}_deduplicated.bam",
+		bg1 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg1"],
+		bg2 = lambda wildcards: config[ samples.group[samples.ID == wildcards.sample].values[0] ]["bg2"]
+	output:
+		protected("omniCLIP/{sample}_ribo0/{sample}_bg_{group}_pred.bed")
+	conda:
+		"envs/omniCLIP.yaml"
+	threads: config["ncores"]
+	shell:
+		"python " + config["omniCLIP_dir"] +"/omniCLIP.py "
+		"--annot {input.anno} --genome-dir {input.genome_dir} "
+		"--clip-files {input.clip} "
+		"--bg-files {input.bg1} --bg-files {input.bg2} "
+		"--out-dir omniCLIP/{wildcards.sample}_ribo0/ "
+		"--nb-cores {threads} "
+		"--max-it 10; "
+		"mv omniCLIP/{wildcards.sample}_ribo0/pred.bed omniCLIP/{wildcards.sample}_ribo0/{wildcards.sample}_bg_{wildcards.group}_ribo0_pred.bed"
+
+
 
 
 # samples.group[samples.ID == {sample}]
