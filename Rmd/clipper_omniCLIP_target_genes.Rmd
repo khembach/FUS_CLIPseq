@@ -1,0 +1,512 @@
+---
+title: "CLIPper and omniCLIP target genes comparison"
+author: "Katharina Hembach"
+date: "5/29/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r packages, message=FALSE}
+library(here)
+library(rtracklayer)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(tibble)
+library(tximport)
+library(GenomicFeatures)
+library(ComplexHeatmap)
+library(Rsamtools)
+library(edgeR)
+library(viridis)
+# library(GenomicAlignments)
+# library(data.table)
+# library(plotly)
+# library(limma)
+```
+
+# Data import
+
+```{r input}
+source(here("R", "data_import.R"))
+
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+out_dir <- here("analysis", "deduplicated", "clipper_omniCLIP_comparison")
+metadat <- read.table(here("metadata.txt"), header = TRUE)
+
+###### Read the CLIP peaks -----------------------------------------------------
+clipper <- read_clipper(here("clipper"), snames = c("HOMO_70K", "SNS_70K"))
+omni <- read_omni(path = here("omniCLIP"), metadat = metadat[c(1,3),])
+```
+
+# CLIPper score cutoff
+
+Where should we set the score cutoff to filter the list of peaks (there are too many).
+
+```{r peak_score_threshold, cache = 2, message = FALSE, warning = FALSE}
+## clipper
+lapply(clipper, function(x) summary(x$score))
+clips <- c("HOMO_70K", "SNS_70K")
+cuts <- c(5e-02, 1 %o% 10^-seq(10, 120, by = 2))
+df0 <- data.frame(cutoff = c(cuts, cuts), peaks = NA, genes = NA, 
+                 sample = c(rep("HOMO_70K", length(cuts)), 
+                            rep("SNS_70K", length(cuts))))
+                 
+for (s in 1:length(clips)) {
+  for(i in 1:length(cuts)) { 
+    tmp <- clipper[[clips[s]]][clipper[[clips[s]]]$score <= cuts[i]]$gene_id
+    df0[i + length(cuts)*(s-1), "peaks"] <- length(tmp)
+    df0[i + length(cuts)*(s-1), "genes"] <- length(unique(tmp))
+  }
+}
+
+df0
+
+clipper_cutoff <- 1e-120
+clipper_top <- lapply(clipper, function(x) x[x$score <= clipper_cutoff])
+sapply(clipper_top, length)
+
+df0 <- df0 %>% gather(key = "type", value = "count", -sample, -cutoff)
+ggplot(df0, aes(x = cutoff, y = count, col = type, lty = sample)) +
+  geom_line(size = 1) + 
+  theme_bw() + 
+  scale_x_log10()
+
+## omniCLIP
+cuts <- c(0, 1:9 %o% 10^(0:2))
+df0 <- data.frame(cutoff = c(cuts, cuts), peaks = NA, genes = NA, 
+                 sample = c(rep("HOMO_70K", length(cuts)), 
+                            rep("SNS_70K", length(cuts))))
+                 
+for (s in 1:length(clips)) {
+  for(i in 1:length(cuts)) { 
+    tmp <- omni[[clips[s]]][omni[[clips[s]]]$score >= cuts[i]]$gene_id
+    df0[i + length(cuts)*(s-1), "peaks"] <- length(tmp)
+    df0[i + length(cuts)*(s-1), "genes"] <- length(unique(tmp))
+  }
+}
+
+df0
+omni_cutoff <- 50
+omni_top <- lapply(omni, function(x) x[x$score >= omni_cutoff])
+sapply(omni_top, length)
+
+df0 <- df0 %>% gather(key = "type", value = "count", -sample, -cutoff)
+ggplot(df0, aes(x = cutoff, y = count, col = type, lty = sample)) +
+  geom_line(size = 1) + 
+  theme_bw() + 
+  scale_x_log10()
+```
+
+We choose CLIPper cutoff `r clipper_cutoff` and omniCLIP cutoff `r omni_cutoff` because the number of peaks is comparable between the methods and samples with these cutoffs.
+
+
+# Location of the top CLIPper and omniCLIP peaks
+
+```{r prepare_annotation, cache = 2, message = FALSE}
+gtf <- import(gtf_file)
+
+anno <- prepare_anno(gtf)
+```
+
+Where are the peaks located in a gene?
+```{r gene_region, cache = 2}
+## convert CLIPper peaks to Ensembl annotation
+for (sample in c("HOMO_70K", "SNS_70K")){
+  seqlevels(clipper_top[[sample]]) <- gsub("chr", "", seqlevels(clipper_top[[sample]]))
+}
+
+peak_location_barplot(clipper_top, omni_top)
+```
+
+
+# Comparison of CLIPper and omniCLIP target genes
+
+Add the gene annotation to the target lists.
+```{r annotate_peaks, cache = 2}
+omni_top_anno <- lapply(omni_top, function(x)
+  add_gene_annotation(x, anno[["gene"]]))
+
+clipper_top_anno <- lapply(clipper_top, function(x)
+  add_gene_annotation(x, anno[["gene"]]))
+
+clipper_targets <- list()
+for (sample in names(clipper_top_anno)){
+  clipper_targets[[sample]] <- clipper_top_anno[[sample]] %>%
+    as.data.frame() %>%
+    dplyr::group_by(gene_id) %>%
+    dplyr::select(seqnames, gene_id, gene_name, gene_biotype) %>%
+    dplyr::mutate(nr_peaks = n()) %>%
+    dplyr::arrange(desc(nr_peaks)) %>%
+    unique()
+  write.table(clipper_targets[[sample]], 
+              file = file.path(out_dir, paste0("clipper_", sample, "_cutoff", 
+                                               clipper_cutoff, "_gene_anno.txt")),
+              quote = FALSE, row.names = FALSE)
+}
+
+omni_targets <- list()
+ for (sample in names(omni_top_anno)){
+   omni_targets[[sample]] <- omni_top_anno[[sample]] %>%
+     as.data.frame() %>%
+     dplyr::group_by(gene_id) %>%
+     dplyr::select(seqnames, gene_id, gene_name, gene_biotype) %>%
+     dplyr::mutate(nr_peaks = n()) %>%
+     dplyr::arrange(desc(nr_peaks)) %>%
+     unique()
+    write.table(omni_targets[[sample]], 
+              file = file.path(out_dir, paste0("omniCLIP_", sample, "_cutoff", 
+                                               omni_cutoff, "_genes_anno.txt")),
+              quote = FALSE, row.names = FALSE)
+
+ }
+
+lapply(clipper_targets, head)
+lapply(omni_targets, head)
+```
+
+## UpSet
+
+We want to compare the predicted FUS target genes (in homogenate and SNS) of the two peak callers.
+For this, we make an upset plot with `complexHeatmap`.
+
+```{r upset_plot, cache = 2}
+
+target_list <- list(clipper_sns = clipper_targets[["SNS_70K"]]$gene_id,
+                    clipper_homo = clipper_targets[["HOMO_70K"]]$gene_id,
+                    omni_sns = omni_targets[["SNS_70K"]]$gene_id,
+                    omni_homo = omni_targets[["HOMO_70K"]]$gene_id)
+
+# target_mat <- list_to_matrix(target_list)
+comb_mat <- make_comb_mat(target_list, mode = "distinct")
+
+UpSet(comb_mat, set_order = c("clipper_sns", "clipper_homo",
+                              "omni_sns", "omni_homo"),
+      comb_col = c("#332288", "#117733", "#882255", "#DDCC77")[comb_degree(comb_mat)])
+
+comb_size(comb_mat)
+```
+
+## Common SNS target genes
+
+What are the target genes that are common between CLIPper SNS and omniCLIP SNS?
+
+```{r common_sns_target_genes, cache = 2}
+clipper_targets[["SNS_70K"]][clipper_targets[["SNS_70K"]]$gene_id %in% 
+                               omni_targets[["SNS_70K"]]$gene_id,]
+```
+
+# Peak score vs. gene expression
+
+What is the relationship between the gene expression and the peak scores?
+
+```{r salmon, cache = 2}
+## new bias corrected Salmon quantifications
+salmon_base_dir <- "/home/Shared/data/seq/sonu_RNAseq/"
+salmon_dir_name <- "salmon_bias"
+
+samples <- list.files(file.path(salmon_base_dir, salmon_dir_name), 
+                      pattern = "^20170214.B-WT*")
+files <- file.path(file.path(salmon_base_dir, salmon_dir_name), 
+                   samples, "quant.sf")
+samples <- str_split(samples, pattern = "-", simplify = TRUE)[ ,2]
+samples <- gsub(pattern = "_R1", replacement = "", x = samples)
+names(files) <-  samples
+grp <- str_split(samples, pattern = "_", simplify = TRUE)
+grp <- as.factor(paste0(grp[ ,1], "_", grp[ ,2]))
+sample_nr <- str_split(samples, pattern = "_", simplify = TRUE)[,3]
+
+tx2gene<- unique(mcols(gtf)[c("transcript_id", "gene_id")])
+tx2gene <- tx2gene[!is.na(tx2gene$transcript_id), ]
+tx2gene <- tx2gene[order(tx2gene$transcript_id), ]
+## gene level counts
+txi <- tximport(files, type="salmon", txIn = TRUE, tx2gene = tx2gene, 
+                txOut=FALSE, countsFromAbundance = "no", ignoreTxVersion = TRUE)  
+tpms <- txi$abundance  # tpm per gene
+```
+
+We plot the peak score vs. the gene expression (TPM).
+
+```{r peak_score_vs_gene_expr_prep, cache = 2, message = FALSE, warning = FALSE}
+df_list <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  df_list[[sample]] <- 
+    data.frame(sample = sample,
+               gene_id = omni_top_anno[[sample]]$gene_id,
+               score = omni_top_anno[[sample]]$score,
+               gene_name = omni_top_anno[[sample]]$gene_name)
+}
+df_omni <- bind_rows(df_list)
+
+df_list <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  df_list[[sample]] <- 
+    data.frame(sample = sample,
+               gene_id = clipper_top_anno[[sample]]$gene_id,
+               score = clipper_top_anno[[sample]]$score,
+               gene_name = clipper_top_anno[[sample]]$gene_name)
+}
+df_clipper <- bind_rows(df_list)
+
+
+## merge the peak df with the tpms
+tpms <- tpms %>%
+  as.data.frame %>%
+  rownames_to_column(var = "gene_id")
+
+df_omni <- df_omni %>%
+  dplyr::left_join(., tpms, by = c("gene_id")) %>%
+  gather(data = ., key = "RNA_seq", value = "TPM", WT_Homo_S1:WT_SNS_S3) %>%
+  dplyr::filter(!is.na(TPM))
+
+
+## merge the peak df with the tpms
+df_clipper <- df_clipper %>%
+  dplyr::left_join(., tpms, by = c("gene_id")) %>%
+  gather(data = ., key = "RNA_seq", value = "TPM", WT_Homo_S1:WT_SNS_S3) %>%
+  dplyr::filter(!is.na(TPM))
+```
+
+
+```{r peak_score_vs_gene_expr_plotting, cache = 2, out.width = "100%", warning = FALSE}
+plot_peak_strength_tpm <- function(df, y_col = "score", wrap_col = "RNA_seq", 
+                                   log = FALSE, col = NULL){
+  p <- ggplot(df, aes_string(x = "TPM", y = y_col)) +
+    geom_point(alpha = 0.3, if (!is.null(col)) {aes_string(color = col)}) +
+    theme_bw() +
+    facet_wrap(~ get(wrap_col))
+  if (log) {
+    p <- p +
+      scale_x_continuous(trans='log10')
+  }
+  p
+}
+
+df_clipper_sns <- df_clipper %>%
+  filter(sample == "SNS_70K" & RNA_seq %in% 
+           c("WT_SNS_S1", "WT_SNS_S2"))
+plot_peak_strength_tpm(df_clipper_sns, y_col = "score")
+plot_peak_strength_tpm(df_clipper_sns, y_col = "score", log = TRUE)
+
+
+df_omni_sns <- df_omni %>%
+  filter(sample == "SNS_70K" & RNA_seq %in% 
+           c("WT_SNS_S1", "WT_SNS_S2"))
+plot_peak_strength_tpm(df_omni_sns, y_col = "score")
+plot_peak_strength_tpm(df_omni_sns, y_col = "score", log = TRUE)
+
+df_clipper_homo <- df_clipper %>%
+  filter(sample == "HOMO_70K" & RNA_seq %in% c("WT_Homo_S1", "WT_Homo_S2_1"))
+plot_peak_strength_tpm(df_clipper_homo, y_col = "score")
+plot_peak_strength_tpm(df_clipper_homo, y_col = "score", log = TRUE)
+
+df_omni_homo <- df_omni %>%
+  filter(sample == "HOMO_70K" & RNA_seq %in% c("WT_Homo_S1", "WT_Homo_S2_1"))
+plot_peak_strength_tpm(df_omni_homo, y_col = "score")
+plot_peak_strength_tpm(df_omni_homo, y_col = "score", log = TRUE)
+```
+
+
+# logFC CLIP-seq vs. logFC RNA-seq
+
+We compute the CLIP and RNA-seq coverage in the top SNS peaks (from omniCLIP). 
+For this, we count the number of reads that overlap with each peak. 
+
+TODO: How should we normalize the data?
+We normalize the read counts with edgeR and compute log2FC of each peak (using the mean for the RNA-seq samples)?
+
+
+```{r logFC_CLIP_vs_RNAseq_count, cache = 2}
+sns_ids <- paste(seqnames(omni_top[["SNS_70K"]]), start(omni_top[["SNS_70K"]]), 
+                 end(omni_top[["SNS_70K"]]), sep = "_")
+
+counts <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  bf <- BamFile(here("BAM_deduplicated", sample, 
+                                 paste0(sample, "_deduplicated.bam")))
+  asMates(bf) <- TRUE
+  param <- ScanBamParam(which = omni_top[["SNS_70K"]])
+  counts[[sample]] <- countBam(bf, param = param)
+  counts[[sample]]$peak_id <- paste(counts[[sample]]$space, 
+                                    counts[[sample]]$start, 
+                                    counts[[sample]]$end, sep = "_")
+  ## order the counts according to initial peak ordering
+  m <- match(sns_ids, counts[[sample]]$peak_id)
+  counts[[sample]] <- counts[[sample]][m,]
+}
+
+clip_log_fc <- log2(counts[["SNS_70K"]]$records) - log2(counts[["HOMO_70K"]]$records)
+
+## logFC of RNA-seq
+bams <- dir("/home/Shared/data/seq/sonu_RNAseq/STAR_Ensembl_GRCm38.90", 
+    pattern = "*_R1_Aligned.sortedByCoord.out.bam$", full.names = TRUE)
+samples <- str_split(bams, pattern = "-", simplify = TRUE)[ ,2]
+samples <- gsub(pattern = "_R1_Aligned.sortedByCoord.out.bam", 
+                replacement = "", x = samples)
+
+rna_counts <- list()
+for (i in 1:length(bams)){
+  sample <- samples[i]
+  bf <- BamFile(bams[i])
+  asMates(bf) <- TRUE
+  param <- ScanBamParam(which = omni_top[["SNS_70K"]])
+  rna_counts[[sample]] <- countBam(bf, param = param)
+  rna_counts[[sample]]$peak_id <- paste(rna_counts[[sample]]$space, 
+                                        rna_counts[[sample]]$start, 
+                                        rna_counts[[sample]]$end, sep = "_")
+  ## order the counts according to initial peak ordering
+  m <- match(sns_ids, rna_counts[[sample]]$peak_id)
+  rna_counts[[sample]] <- rna_counts[[sample]][m,]
+}
+```
+
+```{r RNAseq_logFC, cache = 2}
+
+cts <- data.frame(a = rna_counts[[1]]$records, b = rna_counts[[2]]$records, 
+                  c = rna_counts[[3]]$records, d = rna_counts[[4]]$records)
+colnames(cts) <- samples
+dge0 <- edgeR::DGEList(cts, group = rep(1:2, each = 2))
+dge0 <- edgeR::calcNormFactors(dge0)
+ 
+design <- model.matrix(~0+group, data=dge0$samples)
+dge0 <- estimateDisp(dge0, design = design)
+qlfit <- glmQLFit(dge0, design = design)
+qlf <- glmQLFTest(qlfit, contrast = makeContrasts(WT_SNS_vs_WT_Homo = group2 - group1, 
+                             levels = design))
+rnas_log_fc <- qlf$table$logFC
+
+## order the CLIP-seq and RNA-seq peaks
+df_logfc <- data.frame(logFC_CLIP = clip_log_fc, logFC_RNAseq = rnas_log_fc)
+```
+
+
+```{r logFC_CLIP_vs_RNAseq_plotting, cache = 2}
+## colored by peak score
+df_logfc$score <- omni_top[["SNS_70K"]]$score
+
+ggplot(df_logfc, aes(x = logFC_CLIP, y = logFC_RNAseq)) + 
+  geom_point(alpha = 0.2, aes(color = score)) + 
+  theme_bw() +
+  scale_colour_viridis()
+
+## color by gene location: exon + UTR or intron
+df_logfc$location <- factor(ifelse(overlapsAny(omni_top[["SNS_70K"]], 
+                                               c(anno[["exon"]], 
+                                                 anno[["three_prime_utr"]], 
+                                                 anno[["five_prime_utr"]])),
+                                   "exon", "intron"))
+df_logfc$location <- relevel(df_logfc$location, "intron")
+
+ggplot(df_logfc, aes(x = logFC_CLIP, y = logFC_RNAseq)) + 
+  geom_point(alpha = 0.2, aes(color = location)) + 
+  theme_bw() 
+
+# olap_e <- overlapsAny(omni_top[["SNS_70K"]], anno[["exon"]])
+# olap_3 <- overlapsAny(omni_top[["SNS_70K"]], anno[["three_prime_utr"]])
+# olap_5 <- overlapsAny(omni_top[["SNS_70K"]], anno[["five_prime_utr"]])
+# olap_i <- overlapsAny(omni_top[["SNS_70K"]], anno[["intron"]])
+# 
+# df_logfc$location[olap_e] <- "exon"
+# df_logfc$location[olap_3] <- paste(df_logfc$location[olap_3], "3_UTR", sep = "_")
+# df_logfc$location[olap_5] <- paste(df_logfc$location[olap_5], "5_UTR", sep = "_")
+# df_logfc$location[olap_i] <- paste(df_logfc$location[olap_i], "intron", sep = "_")
+```
+
+## Gene level logFC insted of peak level
+
+```{r salmon_gene_level_logFC, cache = 2}
+## Extract count matrix and average transcript lengths
+counts <- round(txi$counts)
+cts <- counts[rowSums(is.na(counts)) == 0, ]
+normMat <- txi$length[match(rownames(cts), rownames(txi$length)),
+                      match(colnames(cts), colnames(txi$length))]
+normMat <- normMat/exp(rowMeans(log(normMat)))
+normCts <- cts/normMat
+## Generate offset matrix
+eff.lib <- edgeR::calcNormFactors(normCts) * colSums(normCts)
+normMat <- sweep(normMat, 2, eff.lib, "*")
+normMat <- log(normMat)
+## Create DGEList object and add offsets
+dge0 <- edgeR::DGEList(cts, group = grp)
+dge0 <- edgeR::scaleOffset(dge0, normMat)
+dge0 <- edgeR::calcNormFactors(dge0)
+
+## Filter out lowly expressed genes
+dim(dge0)
+keep <- rowSums(cpm(dge0)>1) >= 2
+dge <- dge0[keep, , keep.lib.sizes = FALSE]
+dge <- calcNormFactors(dge)
+dim(dge)
+
+## Estimate dispersion and fit model
+design <- model.matrix(~0+group, data=dge$samples)
+dge <- estimateDisp(dge, design = design)
+qlfit <- glmQLFit(dge, design = design)
+qlf <- glmQLFTest(qlfit, 
+                  contrast = makeContrasts(WT_SNS_vs_WT_Homo = groupWT_SNS - groupWT_Homo, 
+                                           levels = design))
+
+## match the genes to the peak genes
+m <- match(omni_top[["SNS_70K"]]$gene_id, rownames(qlf$table))
+is.na(m) %>% table
+rnas_log_fc_gene <- qlf$table$logFC[m]
+```
+
+```{r logFC_CLIP_vs_RNAseq_gene_plotting, cache = 2}
+
+df_logfc$logFC_RNAseq_gene <- rnas_log_fc_gene
+ggplot(df_logfc, aes(x = logFC_CLIP, y = logFC_RNAseq_gene)) + 
+  geom_point(alpha = 0.2, aes(color = location)) + 
+  theme_bw() 
+```
+
+## All SNS peaks
+
+```{r logFC_CLIP_vs_RNAseq_count_all_peaks, cache = 2}
+sns_ids <- paste(seqnames(omni[["SNS_70K"]]), start(omni[["SNS_70K"]]), 
+                 end(omni[["SNS_70K"]]), sep = "_")
+
+counts <- list()
+for (sample in c("HOMO_70K", "SNS_70K")){
+  bf <- BamFile(here("BAM_deduplicated", sample, 
+                                 paste0(sample, "_deduplicated.bam")))
+  asMates(bf) <- TRUE
+  param <- ScanBamParam(which = omni[["SNS_70K"]])
+  counts[[sample]] <- countBam(bf, param = param)
+  counts[[sample]]$peak_id <- paste(counts[[sample]]$space, 
+                                    counts[[sample]]$start, 
+                                    counts[[sample]]$end, sep = "_")
+  ## order the counts according to initial peak ordering
+  m <- match(sns_ids, counts[[sample]]$peak_id)
+  counts[[sample]] <- counts[[sample]][m,]
+}
+
+clip_log_fc <- log2(counts[["SNS_70K"]]$records) - log2(counts[["HOMO_70K"]]$records)
+df_logfc_all <- data.frame(logFC_CLIP = clip_log_fc)
+
+## match the RNA-seq gene expression logFC
+m <- match(omni[["SNS_70K"]]$gene_id, rownames(qlf$table))
+is.na(m) %>% table
+rnas_log_fc_gene <- qlf$table$logFC[m]
+df_logfc_all$logFC_RNAseq_gene <- rnas_log_fc_gene
+
+
+df_logfc_all$location <- factor(ifelse(overlapsAny(omni[["SNS_70K"]], 
+                                               c(anno[["exon"]], 
+                                                 anno[["three_prime_utr"]], 
+                                                 anno[["five_prime_utr"]])),
+                                   "exon", "intron"))
+df_logfc_all$location <- relevel(df_logfc_all$location, "intron")
+
+ggplot(df_logfc_all, aes(x = logFC_CLIP, y = logFC_RNAseq_gene)) + 
+  geom_point(alpha = 0.2, aes(color = location)) + 
+  theme_bw() 
