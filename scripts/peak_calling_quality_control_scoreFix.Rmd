@@ -634,128 +634,111 @@ df_full_sns <- df_full[df_full$sample == "SNS_70K" & df_full$RNA_seq %in%
 plot_peak_strength_tpm(df_full_sns, y_col = "max_coverage",
                        "SNS_70K_all_peaks_gene_tpm_vs_peak_max_cov_log10.png",
                        log = TRUE, col = "top_peak" )
-plot_peak_strength_tpm(df_full_sns, y_col = "max_coverage",
-                       "SNS_70K_all_peaks_gene_tpm_vs_peak_max_cov.png",
-                       log = FALSE, col = "top_peak" )
+# plot_peak_strength_tpm(df_full_sns, y_col = "max_coverage",
+#                        "SNS_70K_all_peaks_gene_tpm_vs_peak_max_cov.png",
+#                        log = FALSE, col = "top_peak" )
 
 plot_peak_strength_tpm(df_full_sns, y_col = "mean_coverage",
                        "SNS_70K_all_peaks_gene_tpm_vs_peak_mean_cov_log10.png",
                        log = TRUE, col = "top_peak" )
-plot_peak_strength_tpm(df_full_sns, y_col = "mean_coverage",
-                       "SNS_70K_all_peaks_gene_tpm_vs_peak_mean_cov.png",
-                       log = FALSE, col = "top_peak" )
+# plot_peak_strength_tpm(df_full_sns, y_col = "mean_coverage",
+#                        "SNS_70K_all_peaks_gene_tpm_vs_peak_mean_cov.png",
+#                        log = FALSE, col = "top_peak" )
 
-# ## only sample S1 (for email to Phillipp)
-# df_full_sns1 <- df_full[df_full$sample == "SNS_70K" & 
-#                           df_full$RNA_seq == "WT_SNS_S1",]
-# p <- ggplot(df_full_sns1, aes(x = TPM, y = mean_coverage)) +
-#   geom_point(alpha = 0.3, aes(color = top_peak)) +
-#   theme_bw() +
-#   scale_x_continuous(trans='log10') + 
-#   scale_y_continuous(trans="log10") +
-#   guides(color=guide_legend(title="score <= 1e-06"))
-# p
-# ggsave(file.path(out_dir, 
-#                  "SNS_70K_all_peaks_gene_tpm_S1_vs_peak_mean_cov_log10.png"), 
-#        p, width = 5, height = 4) 
-# 
-# df_full_homo <- df_full[df_full$sample == "HOMO_70K" & df_full$RNA_seq %in% 
-#                           c("WT_Homo_S1", "WT_Homo_S2_1"),]
-# 
-# plot_peak_strength_tpm(df_full_homo, y_col = "max_coverage",
-#                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_max_cov_log10.png",
-#                        log = TRUE, col = "top_peak" )
+df_full_homo <- df_full[df_full$sample == "HOMO_70K" & df_full$RNA_seq %in%
+                          c("WT_Homo_S1", "WT_Homo_S2_1"),]
+
+plot_peak_strength_tpm(df_full_homo, y_col = "max_coverage",
+                       "HOMO_70K_all_peaks_gene_tpm_vs_peak_max_cov_log10.png",
+                       log = TRUE, col = "top_peak" )
 # plot_peak_strength_tpm(df_full_homo, y_col = "max_coverage",
 #                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_max_cov.png",
 #                        log = FALSE, col = "top_peak" )
-# plot_peak_strength_tpm(df_full_homo, y_col = "mean_coverage",
-#                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_mean_cov_log10.png",
-#                        log = TRUE, col = "top_peak" )
+plot_peak_strength_tpm(df_full_homo, y_col = "mean_coverage",
+                       "HOMO_70K_all_peaks_gene_tpm_vs_peak_mean_cov_log10.png",
+                       log = TRUE, col = "top_peak" )
 # plot_peak_strength_tpm(df_full_homo, y_col = "mean_coverage",
 #                        "HOMO_70K_all_peaks_gene_tpm_vs_peak_mean_cov.png",
 #                        log = FALSE, col = "top_peak" )
 
-df_sns <- df[df$sample == "SNS_70K" & df$RNA_seq %in% 
-             c("WT_Homo_S1", "WT_Homo_S2_1"),]
+df_sns <- df[df$sample == "SNS_70K" & df$RNA_seq %in%
+             c("WT_SNS_S1", "WT_SNS_S2"),]
+# 
+# plot_peak_strength_tpm(df_sns, y_col = "max_coverage",
+#                        "SNS_70K_gene_tpm_vs_peak_max_cov_log10.png",
+#                        log = TRUE)
+# # plot_peak_strength_tpm(df_sns, y_col = "max_coverage",
+# #                        "SNS_70K_gene_tpm_vs_peak_max_cov.pdf")
+# plot_peak_strength_tpm(df_sns, y_col = "mean_coverage",
+#                        "SNS_70K_gene_tpm_vs_peak_mean_cov_log10.png",
+#                        log = TRUE)
+# # plot_peak_strength_tpm(df_sns, y_col = "mean_coverage",
+# #                        "SNS_70K_gene_tpm_vs_peak_mean_cov.pdf")
+# plot_peak_strength_tpm(df_sns, y_col = "mode_coverage",
+#                        "SNS_70K_gene_tpm_vs_peak_mode_cov_log10.png",
+#                        log = TRUE)
+# # plot_peak_strength_tpm(df_sns, y_col = "mode_coverage",
+# #                        "SNS_70K_gene_tpm_vs_peak_mode_cov.pdf")
+# # # 
+# 
 
-plot_peak_strength_tpm(df_sns, y_col = "max_coverage",
-                       "SNS_70K_gene_tpm_vs_peak_max_cov_log10.png",
-                       log = TRUE)
-plot_peak_strength_tpm(df_sns, y_col = "max_coverage",
-                       "SNS_70K_gene_tpm_vs_peak_max_cov.pdf")
-plot_peak_strength_tpm(df_sns, y_col = "mean_coverage",
-                       "SNS_70K_gene_tpm_vs_peak_mean_cov_log10.png",
-                       log = TRUE)
-plot_peak_strength_tpm(df_sns, y_col = "mean_coverage",
-                       "SNS_70K_gene_tpm_vs_peak_mean_cov.pdf")
-plot_peak_strength_tpm(df_sns, y_col = "mode_coverage",
-                       "SNS_70K_gene_tpm_vs_peak_mode_cov_log10.png",
-                       log = TRUE)
-plot_peak_strength_tpm(df_sns, y_col = "mode_coverage",
-                       "SNS_70K_gene_tpm_vs_peak_mode_cov.pdf")
-# 
-# df_homo <- df[df$sample == "HOMO_70K" & df$RNA_seq %in% 
-#                 c("WT_Homo_S1", "WT_Homo_S2_1"),]
-# 
+df_homo <- df[df$sample == "HOMO_70K" & df$RNA_seq %in%
+                c("WT_Homo_S1", "WT_Homo_S2_1"),]
+
 # plot_peak_strength_tpm(df_homo, y_col = "max_coverage",
 #                        "HOMO_70K_gene_tpm_vs_peak_max_cov_log10.png",
 #                        log = TRUE)
-# plot_peak_strength_tpm(df_homo, y_col = "max_coverage",
-#                        "HOMO_70K_gene_tpm_vs_peak_max_cov.pdf")
+# # plot_peak_strength_tpm(df_homo, y_col = "max_coverage",
+# #                        "HOMO_70K_gene_tpm_vs_peak_max_cov.pdf")
 # plot_peak_strength_tpm(df_homo, y_col = "mean_coverage",
 #                        "HOMO_70K_gene_tpm_vs_peak_mean_cov_log10.png",
 #                        log = TRUE)
-# plot_peak_strength_tpm(df_homo, y_col = "mean_coverage",
-#                        "HOMO_70K_gene_tpm_vs_peak_mean_cov.pdf")
+# # plot_peak_strength_tpm(df_homo, y_col = "mean_coverage",
+# #                        "HOMO_70K_gene_tpm_vs_peak_mean_cov.pdf")
 # plot_peak_strength_tpm(df_homo, y_col = "mode_coverage",
 #                        "HOMO_70K_gene_tpm_vs_peak_mode_cov_log10.png",
 #                        log = TRUE)
-# plot_peak_strength_tpm(df_homo, y_col = "mode_coverage",
-#                        "HOMO_70K_gene_tpm_vs_peak_mode_cov.pdf")
+# # plot_peak_strength_tpm(df_homo, y_col = "mode_coverage",
+# #                        "HOMO_70K_gene_tpm_vs_peak_mode_cov.pdf")
+# 
 
 
 
-### save interactive figure with plotly
-plot_peak_strength_tpm_plotly <- function(df, y_col = "max_coverage", outfile, 
+
+## adjust the position of the x and y labels on the plot
+## plotly sometimes has issues with faceted plots
+layout_ggplotly <- function(gg, x = -0.02, y = -0.08){
+  # The 1 and 2 goes into the list that contains the options for the x and y
+  # axis labels respectively
+  gg[['x']][['layout']][['annotations']][[1]][['y']] <- x
+  gg[['x']][['layout']][['annotations']][[2]][['x']] <- y
+  gg
+}
+
+### interactive figure with plotly
+plot_peak_strength_tpm_plotly <- function(df, y_col = "max_coverage", 
                                           wrap_col = "RNA_seq", log = FALSE){
   p <- ggplot(df, aes(x = TPM, y = get(y_col), 
                       text = paste("gene_name: ", gene_name))) +
     geom_point(alpha = 0.3) +
     theme_bw() +
-    facet_wrap(~ get(wrap_col))
+    facet_wrap(~ get(wrap_col)) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(y = y_col)
   if (log) {
     p <- p +
       scale_x_continuous(trans='log10') + 
       scale_y_continuous(trans="log10")
   }
-  p <- ggplotly(p)
-  htmlwidgets::saveWidget(as_widget(p), file = file.path(out_dir_top, outfile))
+  ggplotly(p)
 }
 
-
-# plot_peak_strength_tpm_plotly(df_sns, y_col = "max_coverage",
-#                        "SNS_70K_gene_tpm_vs_peak_max_cov.html",
-#                        log = FALSE)
-# plot_peak_strength_tpm_plotly(df_sns, y_col = "max_coverage",
-#                        "SNS_70K_gene_tpm_vs_peak_max_cov_log10.html",
-#                        log = TRUE)
-# plot_peak_strength_tpm_plotly(df_sns, y_col = "mean_coverage",
-#                               "SNS_70K_gene_tpm_vs_peak_mean_cov.html",
-#                               log = FALSE)
-# plot_peak_strength_tpm_plotly(df_sns, y_col = "mean_coverage",
-#                               "SNS_70K_gene_tpm_vs_peak_mean_cov_log10.html",
-#                               log = TRUE)
-# 
-# plot_peak_strength_tpm_plotly(df_homo, y_col = "max_coverage",
-#                               "HOMO_70K_gene_tpm_vs_peak_max_cov.html",
-#                               log = FALSE)
-# plot_peak_strength_tpm_plotly(df_homo, y_col = "max_coverage",
-#                               "HOMO_70K_gene_tpm_vs_peak_max_cov_log10.html",
-#                               log = TRUE)
-# plot_peak_strength_tpm_plotly(df_homo, y_col = "mean_coverage",
-#                               "HOMO_70K_gene_tpm_vs_peak_mean_cov.html",
-#                               log = FALSE)
-# plot_peak_strength_tpm_plotly(df_homo, y_col = "mean_coverage",
-#                               "HOMO_70K_gene_tpm_vs_peak_mean_cov_log10.html",
-#                               log = TRUE)
+plot_peak_strength_tpm_plotly(df_sns, y_col = "max_coverage", log = TRUE) %>%
+  layout_ggplotly(x = -0.1, y = -0.05)
+# plot_peak_strength_tpm_plotly(df_sns, y_col = "mean_coverage", log = TRUE) %>% 
+  # layout_ggplotly(x = -0.1, y = -0.05)
+# plot_peak_strength_tpm_plotly(df_homo, y_col = "max_coverage", log = TRUE) %>% 
+#   layout_ggplotly(x = -0.1, y = -0.05)
+# plot_peak_strength_tpm_plotly(df_homo, y_col = "mean_coverage", log = TRUE) %>% 
+#   layout_ggplotly(x = -0.1, y = -0.05)
 ```
