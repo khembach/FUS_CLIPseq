@@ -139,14 +139,14 @@ peak_location_barplot <- function(clipper=NA, omni, filepath) {
   print(df)
   
   ## stacked barplot with the percentage of reads in the different gene regions
-  p <- ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
     geom_col(position = "stack") +
     theme_bw() +
     theme(text=element_text(size=25), axis.text.y = element_text(angle = 45, 
                                                                  hjust = 1) ) +
     coord_flip() +
     theme(legend.position="bottom", legend.direction="vertical") 
-  p
+  )
   # ggsave(filepath, p, width=7, height =7) 
 }
 
@@ -169,4 +169,52 @@ add_gene_annotation <- function(peaks, genes){
                                               c("gene_id", "gene_name", 
                                                 "gene_biotype")]))
   res
+}
+
+
+
+#' Gene region barplot
+#' 
+#' Barplot of the number of peaks at the different gene regions.
+#'
+#' @param peaks GRangesList with peaks 
+#' @param anno GRangesList with gene annotations
+#'
+#' @return
+#' @export
+#'
+#' @examples
+peak_gene_region_barplot <- function(peaks, anno) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  print(df)
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text=element_text(size=25), axis.text.x = element_text(angle = 45, 
+                                                                       hjust = 1))
+  )
 }
