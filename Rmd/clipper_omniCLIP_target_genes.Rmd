@@ -109,8 +109,9 @@ ggplot(df0, aes(x = cutoff, y = count, col = type, lty = sample)) +
 
 We choose CLIPper cutoff `r clipper_cutoff` and omniCLIP cutoff `r omni_cutoff` because the number of peaks is comparable between the methods and samples with these cutoffs.
 
-
 # Location of the top CLIPper and omniCLIP peaks
+
+As selection criteria for the top peaks, we want to use the peak location in genes. We want to select the maximal number of top peaks that still give us an enrichment of exonic an UTR peaks in the SNS sample, but not the homogenate.
 
 ```{r prepare_annotation, cache = 2, message = FALSE}
 gtf <- import(gtf_file)
@@ -128,6 +129,25 @@ for (sample in c("HOMO_70K", "SNS_70K")){
 peak_location_barplot(clipper_top, omni_top)
 ```
 
+## How does the number of top peaks influence the location distribution?
+```{r gene_region_different_n_top_peaks, cache = 2}
+## convert CLIPper peaks to Ensembl annotation
+for (sample in names(clipper)){
+  seqlevels(clipper[[sample]]) <- gsub("chr", "", 
+                                       seqlevels(clipper[[sample]]))
+}
+
+n <- c(1000, 2000, 5000, 10000, 20000, 50000)
+
+for(n_peaks in n){
+  print(n_peaks)
+  peak_location_barplot(lapply(clipper, function(x) 
+                          x[order(x$score)][1:n_peaks]),
+                        lapply(omni, function(x) 
+                          x[order(x$score, decreasing = TRUE)][1:n_peaks]))
+}
+
+```
 
 # Comparison of CLIPper and omniCLIP target genes
 
@@ -325,7 +345,7 @@ TODO: How should we normalize the data?
 We normalize the read counts with edgeR and compute log2FC of each peak (using the mean for the RNA-seq samples)?
 
 
-```{r logFC_CLIP_vs_RNAseq_count, cache = 2}
+```{r logFC_CLIP, cache = 2}
 sns_ids <- paste(seqnames(omni_top[["SNS_70K"]]), start(omni_top[["SNS_70K"]]), 
                  end(omni_top[["SNS_70K"]]), sep = "_")
 
@@ -344,8 +364,14 @@ for (sample in c("HOMO_70K", "SNS_70K")){
   counts[[sample]] <- counts[[sample]][m,]
 }
 
-clip_log_fc <- log2(counts[["SNS_70K"]]$records) - log2(counts[["HOMO_70K"]]$records)
+## offset of 1
+o <- 1
 
+clip_log_fc <- log2(counts[["SNS_70K"]]$records + o) - 
+  log2(counts[["HOMO_70K"]]$records + o)
+```
+
+```{r RNAseq_count, cache = TRUE}
 ## logFC of RNA-seq
 bams <- dir("/home/Shared/data/seq/sonu_RNAseq/STAR_Ensembl_GRCm38.90", 
     pattern = "*_R1_Aligned.sortedByCoord.out.bam$", full.names = TRUE)
@@ -471,7 +497,7 @@ ggplot(df_logfc, aes(x = logFC_CLIP, y = logFC_RNAseq_gene)) +
 
 ## All SNS peaks
 
-```{r logFC_CLIP_vs_RNAseq_count_all_peaks, cache = 2}
+```{r logFC_CLIP_all_peaks, cache = TRUE}
 sns_ids <- paste(seqnames(omni[["SNS_70K"]]), start(omni[["SNS_70K"]]), 
                  end(omni[["SNS_70K"]]), sep = "_")
 
@@ -489,8 +515,14 @@ for (sample in c("HOMO_70K", "SNS_70K")){
   m <- match(sns_ids, counts[[sample]]$peak_id)
   counts[[sample]] <- counts[[sample]][m,]
 }
+```
 
-clip_log_fc <- log2(counts[["SNS_70K"]]$records) - log2(counts[["HOMO_70K"]]$records)
+```{r logFC_CLIP_vs_RNAseq_count_all_peaks, cache = 2}
+## offset of 1, because we have many peaks with a count of 0 in one sample
+o <- 1
+
+clip_log_fc <- log2(counts[["SNS_70K"]]$records + o) - 
+  log2(counts[["HOMO_70K"]]$records + o)
 df_logfc_all <- data.frame(logFC_CLIP = clip_log_fc)
 
 ## match the RNA-seq gene expression logFC
