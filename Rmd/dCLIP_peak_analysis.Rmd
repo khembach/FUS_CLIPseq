@@ -1,0 +1,194 @@
+---
+title: "dCLIP peak analysis"
+author: "Katharina Hembach"
+date: "6/11/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, message=FALSE}
+library(here)
+library(rtracklayer)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(GenomicFeatures)
+library(tidyr)
+```
+
+# Data import
+
+```{r input, cache = TRUE}
+source(here("R", "data_import.R"))
+
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+# metadat <- read.table(here("metadata.txt"), header = TRUE)
+
+###### Read the dCLIP BED file -------------------------------------------------
+dclip <- import(here("dCLIP", "dCLIP_summary.bed"))
+```
+
+# dCLIP states
+
+dcLIP divides the clusters into 3 states:
+
+* red (#FF0000) = **state 0** = more binding in 2 than 1
+* green (#00FF00) = **state 1** = equal binding
+* blue (#0000FF) = **state 2** = more binding in 1 than 2
+
+We are mainly intersted in state 2, because these are regions that are more bound in the SNS cample than the homogenate sample.
+
+```{r rgb_state_conversion, cache = TRUE}
+dclip$state <- ifelse(dclip$itemRgb == "#FF0000", 0, 
+                        ifelse(dclip$itemRgb == "#00FF00", 1, 2))
+dclip$state %>% table
+```
+
+# Gene annotation
+
+```{r prepare_annotation, cache = 2, message = FALSE, warnings = FALSE}
+gtf <- import(gtf_file)
+
+anno <- prepare_anno(gtf)
+```
+
+We anotate each region with the overlapping gene. If a region overlaps more than one gene, we will duplicate the region and annotated it with all genes.
+
+```{r annotated_peaks, cache = TRUE, warnings = FALSE}
+
+# intersect(seqlevels(dclip), seqlevels(anno[["gene"]])) 
+# 
+
+olaps <- findOverlaps(dclip, anno[["gene"]], ignore.strand=FALSE)
+length(olaps)
+olaps %>% queryHits() %>% unique() %>% length()
+
+df <- data.frame(peak = queryHits(olaps), 
+                 gene = anno[["gene"]]$gene_id[subjectHits(olaps)])
+
+df_sum <- df %>% group_by(peak) %>%
+  summarise(n_genes = n()) 
+## number of genes per peak
+table(df_sum$n_genes)
+
+## annotate peaks with all overlapping genes
+dclip_raw <- dclip
+dclip <- dclip_raw[queryHits(olaps)]
+dclip$gene_id <- anno[["gene"]][subjectHits(olaps)]$gene_id
+```
+
+
+# Score distribution per state
+
+The score is the average binding strength (average number of reads?) of condition 1 (state 2) or condition 2 (state 0). The score is always 0 for state 1.
+
+```{r score_distribution, cache = 2, dependson = "annotated_peaks"}
+scores <- split(dclip$score, dclip$state) 
+scores %>% lapply(summary)
+
+mcols(dclip)[,c("state", "score")] %>% 
+  as.data.frame() %>%
+  mutate(state = as.factor(state)) %>%
+  ggplot(aes(y = score, color = state)) + 
+  geom_boxplot() + 
+  theme_bw()
+```
+
+# Number of peaks and genes per cutoff
+
+```{r peak_score_threshold, cache = 2, message = FALSE, warning = FALSE, dependson = "annotated_peaks"}
+dclip_s <- split(dclip, dclip$state)
+
+cuts <- c(0, 1:9 %o% 10^(0:2), 1000, 1500, 2000)
+states <- c("0", "2")
+
+df0 <- data.frame(cutoff = c(cuts, cuts), peaks = NA, genes = NA,
+                 state = c(rep(0, length(cuts)), 
+                            rep(2, length(cuts))))
+                 
+for (s in 1:length(states)) {
+  for (i in 1:length(cuts)) { 
+    tmp <- dclip_s[[states[s]]][dclip_s[[states[s]]]$score >= cuts[i]]$gene_id
+    
+    df0[i + length(cuts)*(s-1), "peaks"] <- length(tmp)
+    df0[i + length(cuts)*(s-1), "genes"] <- length(unique(tmp))
+  }
+}
+
+df0
+```
+
+# Peak location in genes
+
+```{r peak_location_barplot_function, warnings = FALSE, message = FALSE, cache = TRUE}
+peak_location_barplot <- function(peaks) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+  names(olap_len) <- paste0("state ", names(olap_len))
+  
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  print(df)
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+    geom_col(position = "stack") +
+    theme_bw() +
+    theme(text=element_text(size=25), axis.text.y = element_text(angle = 45, 
+                                                                 hjust = 1) ) +
+    coord_flip() +
+    theme(legend.position="bottom", legend.direction="vertical") 
+  )
+}
+```
+
+
+```{r gene_region, cache = 2, warnings = FALSE, message = FALSE, dependson = "peak_location_barplot_function"}
+peak_location_barplot(dclip_s)
+
+## using score cutoff of 10
+cutoff <- 10
+dclip_top <- dclip[dclip$score >= cutoff]
+dclip_top_s <- split(dclip_top, dclip_top$state)
+peak_location_barplot(dclip_top_s)
+```
+
+
+## How does the number of top peaks influence the location distribution?
+```{r gene_region_different_n_top_peaks, cache = 2, warnings = FALSE, dependson = "peak_location_barplot_function"}
+n <- c(1000, 2000, 5000, 10000, 15000, 20000, 25000)
+
+for(n_peaks in n){
+  print(n_peaks)
+  peak_location_barplot(lapply(dclip_s, function(x) 
+                          x[order(x$score, decreasing = TRUE)][1:n_peaks]))
+}
+```
+
+
+dCLIP also gives us too many intronic peaks and the difference between SNS and homogenate is too small.

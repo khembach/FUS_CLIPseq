@@ -34,8 +34,9 @@ rule all:
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "SNS_70K", group = "SNS"),
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred_INDEL.vcf.gz.tbi", sample = "HOMO_70K", group = "Brain")
 		# expand("omniCLIP/{sample}_ribo0/{sample}_bg_{group}_ribo0_pred.bed", sample = "SNS_70K", group="SNS_ribo0"),
-		expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "SNS_70K", group="SNS"),
-		expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "HOMO_70K", group="Brain")
+		# expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "SNS_70K", group="SNS"),
+		# expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "HOMO_70K", group="Brain"),
+		"dCLIP/dCLIP_summary.bed"
 
 
 
@@ -428,6 +429,36 @@ rule omniCLIP_ribo0:
 		"--nb-cores {threads} "
 		"--max-it 10; "
 		"mv omniCLIP/{wildcards.sample}_ribo0/pred.bed omniCLIP/{wildcards.sample}_ribo0/{wildcards.sample}_bg_{wildcards.group}_ribo0_pred.bed"
+
+
+
+## ------------------------------------------------------------------------------------ ##
+## Comparative CLIP-seq analysis with dCLIP
+## ------------------------------------------------------------------------------------ ##
+
+rule Sam2Bam:
+	input:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.bam"
+	output:
+		"BAM_deduplicated/{sample}/{sample}_deduplicated.sam"
+	threads:
+		10
+	shell:
+		"samtools view -h -@ 10 -o {output} {input}"
+
+
+
+rule dCLIP:
+	input:
+		sns = "BAM_deduplicated/SNS_70K/SNS_70K_deduplicated.sam",
+		homo = "BAM_deduplicated/HOMO_70K/HOMO_70K_deduplicated.sam",
+	output:
+		"dCLIP/dCLIP_summary.bed"
+	shell:
+		"perl /home/kathi/software/dCLIP1.7/bin/dCLIP.pl "
+		"-f1 {input.sns} -f2 {input.homo} -temp dCLIP/ -dir dCLIP/ "
+		"-mut 'Del' -m1 5 -m2 5 -fr fr-second -pair ',' -filter 5"
+
 
 
 
