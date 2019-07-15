@@ -1452,11 +1452,16 @@ write.table(loess_targets,
             file = file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
                                              pValue_cut, "_gene_anno.txt")),
             quote = FALSE, row.names = FALSE, sep = "\t")
+```
+
+
+```{r write-BED, cache = TRUE}
+loess_peaks$name <- loess_peaks$gene_id
 export(loess_peaks, file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
                                             pValue_cut, ".bed")))
 ```
 
-```{r MA-loess-p-value-cutoff, dependson = "loess-p-value-different-cutoffs"}
+```{r MA-loess-p-value-cutoff, dependson = "loess-p-value-different-cutoffs", cache = TRUE}
 ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=PValue < pValue_cut & logFC > 0)) +
   geom_point() + geom_density_2d(colour="black") + 
   theme_bw() +
@@ -1488,6 +1493,65 @@ topGO(goana_loess, ontology = "BP", number = 10)
 topGO(goana_loess, ontology = "MF", number = 10)
 ```
 
+```{r write-goana-pValue, cache = TRUE}
+write.table(topGO(goana_loess, ontology = "CC", number = 100),
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
+                                      pValue_cut, "_goana_CC.txt")),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_loess, ontology = "BP", number = 100),
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_",
+                                      pValue_cut, "_goana_BP.txt")),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_loess, ontology = "MF", number = 100),
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
+                                      pValue_cut, "_goana_MF.txt")),
+            sep = "\t", quote = FALSE)
+```
+
+
+What are the pre- and postsynaptic genes?
+```{r pre-postsynaptic-genes, cache = TRUE}
+## if we only want to check a few genes:
+x <- org.Mm.egGO2ALLEGS
+Rkeys(x) <- "GO:0098793"
+EG <- mappedLkeys(x)
+presynapse <- entrez_loess$ensembl_gene_id[entrez_loess$entrezgene %in% EG]
+presynapse <- mcols(anno[["gene"]][anno[["gene"]]$gene_id %in% presynapse, 
+                                   c("gene_id", "gene_name", "gene_biotype")])
+presynapse$gene_name
+write.table(presynapse, file = file.path(out_dir, 
+                                         paste0("top_peaks_loess_adjM_pValue_", 
+                                                pValue_cut, "_presynapse.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+
+x <- org.Mm.egGO2ALLEGS
+Rkeys(x) <- "GO:0098794"
+EG <- mappedLkeys(x)
+postsynapse <- entrez_loess$ensembl_gene_id[entrez_loess$entrezgene %in% EG]
+postsynapse <- mcols(anno[["gene"]][anno[["gene"]]$gene_id %in% postsynapse, 
+                                   c("gene_id", "gene_name", "gene_biotype")])
+postsynapse$gene_name
+write.table(postsynapse, file = file.path(out_dir, 
+                                         paste0("top_peaks_loess_adjM_pValue_", 
+                                                pValue_cut, "_postsynapse.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+```
+
+## KEGG pathway analysis
+
+```{r kegga, cache = TRUE}
+## one-sided hypergeometric tests
+kegga_res<- kegga(de = unique(entrez_loess$entrezgene), species = "Mm",
+                   universe = sns_bg_entrez$entrezgene)
+## sort the pathways after raw p-value
+kegga_res <- kegga_res[order(kegga_res$P.DE, decreasing = FALSE),]
+topKEGG(kegga_res, number = 20)
+write.table(topKEGG(kegga_res, number = 100), 
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", pValue_cut, 
+                      "_kegga.txt")), sep = "\t", quote = FALSE)
+```
+
+
 ## UpSet
 
 Overlap with the top genes from the raw MA-plot.
@@ -1504,9 +1568,38 @@ UpSet(comb_mat, set_order = c("loess_adj_M_pValue", "raw_M"),
 
 ## IGV screenshots
 
-Of genes with many and only few peaks.
+Top 3 genes (# peaks)
 
-TODO!!!
+$~$
+
+solute carrier family 1 (glial high affinity glutamate transporter), member 2
+![Slc1a2](../analysis/deduplicated/MA_plot_selection/IGV_pictures/top_pValue/Slc1a2.png)
+
+$~$
+
+SPARC-like protein 1:
+secreted protein with high structural similarity to SPARC
+![Sparcl1](../analysis/deduplicated/MA_plot_selection/IGV_pictures/top_pValue/Sparcl1.png)
+
+$~$
+
+Secretogranin-1:
+Secretogranin-1 is a neuroendocrine secretory granule protein, which may be the precursor for other biologically active peptides.
+![Chgb](../analysis/deduplicated/MA_plot_selection/IGV_pictures/top_pValue/Chgb.png)
+
+Two genes with only a single peak.
+
+$~$
+
+erythroid differentiation regulator 1
+![Erdr1](../analysis/deduplicated/MA_plot_selection/IGV_pictures/top_pValue/Erdr1.png)
+
+
+$~$
+
+glutamate receptor, ionotropic, AMPA3 (alpha 3)
+![Gria3](../analysis/deduplicated/MA_plot_selection/IGV_pictures/top_pValue/Gria3.png)
+
 
 # Max peak coverage vs. gene TPM
 
@@ -1599,7 +1692,7 @@ qlf <- glmQLFTest(qlfit)
 rnas_log_fc <- qlf$table$logFC
 ```
 
-```{r CLIP-RNA-seq-logFC }
+```{r CLIP-RNA-seq-logFC}
 df_logfc <- data.frame(logFC_CLIP = lrt$table$logFC, logFC_RNAseq = rnas_log_fc)
 ```
 
@@ -1611,6 +1704,15 @@ ggplot(df_logfc, aes(x = logFC_CLIP, y = logFC_RNAseq)) +
   geom_point(alpha = 0.2, aes(color = -log10(pValue))) + 
   theme_bw() +
   scale_colour_viridis()
+
+## colored by selected peaks (p-value <0.0001)
+sns_targets <- paste(seqnames(loess_peaks), start(loess_peaks), 
+                 end(loess_peaks), sep = "_")
+df_logfc$target <- sns_ids %in% sns_targets
+
+ggplot(df_logfc, aes(x = logFC_CLIP, y = logFC_RNAseq)) + 
+  geom_point(alpha = 0.2, aes(color = target)) + 
+  theme_bw() 
 
 ## color by gene location: exon + UTR or intron
 df_logfc$location <- factor(ifelse(overlapsAny(clipper[["SNS_70K"]], 
