@@ -24,3 +24,6 @@ scripts/*.xml
 *_files/
 *_cache/
 dCLIP/
+CIRCexplorer2/
+STAR_chimeric/
+circRNA/

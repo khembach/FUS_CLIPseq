@@ -6,6 +6,7 @@ import os.path
 import pandas as pd
 samples = pd.read_table(config["metatxt"])
 
+include: "rules/circRNA.smk"
 
 ### activate the clipseq conda environment
 # source activate clipseqworkflow
@@ -559,3 +560,21 @@ rule vcf_idx:
 		# "echo 'tabix version:\n' > {log.tabix}; tabix --help >> {log.tabix} 2>&1;"
 
 ## TODO: how to redirect the help message output to a log file to save the version information?
+
+
+###########################################
+# rules for running parts of the pipeline #
+###########################################
+
+## circRNAs
+rule run_CIRCexplorer2:
+	input:
+		expand("CIRCexplorer2/{sample}_circularRNA_known.txt", sample = ["SNS_70K", "HOMO_70K"])
+
+rule run_convert_CIRCexplorer2_UCSC:
+	input:
+		expand("CIRCexplorer2/{sample}_circularRNA_known.UCSC.txt", sample = ["SNS_70K", "HOMO_70K"])
+
+rule run_convert_STAR_UCSC:
+	input:
+		expand("STAR_chimeric/{sample}/{sample}.UCSC.Chimeric.out.junction", sample = ["SNS_70K", "HOMO_70K"])

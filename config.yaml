@@ -59,3 +59,18 @@ genome_dir: ../clip_Nov2017/genome_fasta/
 
 ## Picard tools executable:
 picard_dir: /home/kathi/software/picard-2.18.4
+
+## bowtie index prefix
+# bowtie_prefix: reference/bowtie/Mus_musculus.GRCm38.dna.primary_assembly
+
+# ## tophat2 executable
+# tophat2: /home/kathi/software/tophat-2.1.1.Linux_x86_64/tophat2
+
+## STAR executable
+STAR: /home/kathi/software/STAR-2.7.1a/source/STAR
+STARindex_chimeric: reference/STAR/Ensembl_GRCm38.90/Ensembl_GRCm38.90.dna.primary_assembly_75
+sjdbOverhang: 75
+
+## downloaded from UCSC with: fetch_ucsc.py mm10 ref mm10_ref.txt
+## alternatively: download refFlat.txt.gz from ftp://hgdownload.soe.ucsc.edu/goldenPath/mm10/database/
+genePred: reference/mm10_ref.txt
