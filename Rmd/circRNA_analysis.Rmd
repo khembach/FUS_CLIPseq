@@ -1,0 +1,322 @@
+---
+title: "circRNA analysis of FUS CLIP-seq"
+author: "Katharina Hembach"
+date: "7/9/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rmarkdown)
+library(here)
+library(rtracklayer)
+library(data.table)
+```
+
+
+# STAR back-splice junctions
+
+We use the STAR ouput file Chimeric.out.junction for the analysis.
+
+```{r}
+
+import_chim_junctions <- function(filepath){
+  x <- fread(filepath)
+  colnames(x) <- c("chr1", "donor", "strand_donor", "chr2", "acc", 
+                   "strand_acc", "type", "repeat_len_left", "repeat_len_right", 
+                   "name", "start_segm1", "CIGAR1", "start_segm2", "CIGAR2")
+  x
+}
+
+sns <- import_chim_junctions(here("STAR_chimeric", "SNS_70K", 
+                                  "SNS_70K.Chimeric.out.junction"))
+
+hom <- import_chim_junctions(here("STAR_chimeric", "HOMO_70K", 
+                                  "HOMO_70K.Chimeric.out.junction"))
+```
+
+
+Example:
+
+chr10	156	+	chr10	62	+	-1	0	0	700523F:212:HCK3FBCX2:2:1109:4480:100672	81	1S75M	63	66M3S
+
+Columns 2 and 5 define the start and end of the chimeric junction (the two ends that will be spliced together).
+
+We will use these two columns to check if any of the chimeric reads defines a circular RNA.
+The strand of the second read is reverse complemented, so circRNAs should have identical strand for donor and acceptor.
+
+## Number of different junction types
+
+junction type: -1=encompassing junction (between the mates), 1=GT/AG, 2=CT/AC
+I think 0 means "any other motif"
+
+```{r}
+table(sns$type)
+table(hom$type)
+```
+
+## Number of chimeric reads
+
+```{r}
+nrow(sns)
+nrow(hom)
+```
+
+Number of chimeric reads on the same chromosome and strand
+```{r}
+table(sns$chr1 == sns$chr2)
+table(hom$chr1 == hom$chr2)
+
+sns <- sns[sns$chr1 == sns$chr2, ]
+hom <- hom[hom$chr1 == hom$chr2, ]
+
+table(sns$strand_donor == sns$strand_acc)
+table(hom$strand_donor == hom$strand_acc)
+
+sns <- sns[sns$strand_donor == sns$strand_acc, ]
+hom <- hom[hom$strand_donor == hom$strand_acc, ]
+```
+
+circRNAs can be created from the sense or antisense strand. Thus, we keep any BSJ located within gene boundaries independent of the strand.
+Citation from `Biogenesis and Function of Circular RNAs in Health and in Disease, by George Haddad and Johan M. Lorenzen`:
+"They can arise mainly from exons but circRNAs deriving from inter- or intragenic, and intronic regions as well as antisense sequences have been reported (Cocquerelle et al., 1993; Lan et al., 2016)."
+
+Number of chimeric reads that can be mapped to a gene:
+
+```{r, warning = FALSE, message = FALSE}
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+gtf <- import(gtf_file)
+genes <- unique(gtf[gtf$type == "gene"])
+
+sns_gr <- GRanges(sns$chr1, IRanges(pmin(sns$acc, sns$donor), 
+                                    pmax(sns$acc, sns$donor)), sns$strand_donor)
+hom_gr <- GRanges(hom$chr1, IRanges(pmin(hom$acc, hom$donor), 
+                                    pmax(hom$acc, hom$donor)), hom$strand_donor)
+## remove all BSJ where donor and acceptor are less than 40 bp apart
+sns_gr <- sns_gr[width(sns_gr)>=42]
+hom_gr <- hom_gr[width(hom_gr)>=42]
+
+```
+
+The STAR coordinates are the coordinates of the donor and acceptor. If we want to compare it to CIRCexplorere2 or gene annotations, we have to convert the coordinates to the start and end of the first and last exon (+1 start and -1 end).
+
+```{r}
+sns_gr <- sns_gr - 1
+hom_gr <- hom_gr - 1
+```
+
+```{r, warning = FALSE, message = FALSE}
+## How many unique backsplice juntions do we have?
+sns_gr$ID <- as.character(sns_gr)
+hom_gr$ID <- as.character(hom_gr)
+## count the occurrence of each backsplice junction
+tab_sns <- table(sns_gr$ID)
+tab_hom <- table(hom_gr$ID)
+## remove duplicates
+sns_gr <- unique(sns_gr)
+hom_gr <- unique(hom_gr)
+## add the count the the table
+m_sns <- match(sns_gr$ID, names(tab_sns))
+m_hom <- match(hom_gr$ID, names(tab_hom))
+sns_gr$count <- as.vector(tab_sns[m_sns])
+hom_gr$count <- as.vector(tab_hom[m_hom])
+
+## number of unique backsplice junctions
+length(sns_gr)
+length(hom_gr)
+## How many times does a BSJ occur?
+table(sns_gr$count)
+table(hom_gr$count)
+
+## located within any gene on the same strand
+table(overlapsAny(sns_gr, genes,  type = "within"))
+table(overlapsAny(hom_gr, genes,  type = "within"))
+
+## located within any gene on either strand
+table(overlapsAny(sns_gr, genes, type = "within", ignore.strand = TRUE))
+table(overlapsAny(hom_gr, genes, type = "within", ignore.strand = TRUE))
+
+sns_gr <- sns_gr[overlapsAny(sns_gr, genes, type = "within", ignore.strand = TRUE)]
+hom_gr <- hom_gr[overlapsAny(hom_gr, genes, type = "within", ignore.strand = TRUE)]
+
+## How many times does a BSJ occur?
+table(sns_gr$count)
+table(hom_gr$count)
+
+## Filter out all BSJ with less than 5 supporting reads
+sns_gr_top <- sns_gr[sns_gr$count >4]
+hom_gr_top <- hom_gr[hom_gr$count >4]
+
+## Where are the BSJ with many reads located?
+sns_gr_top <- sns_gr_top[order(sns_gr_top$count, decreasing = TRUE)]
+hom_gr_top <- hom_gr_top[order(hom_gr_top$count, decreasing = TRUE)]
+
+unique(genes[subjectHits(findOverlaps(sns_gr_top[sns_gr_top$count > 10], genes, type = "within", ignore.strand = TRUE))]$gene_name)
+unique(genes[subjectHits(findOverlaps(hom_gr_top[hom_gr_top$count > 5], genes, type = "within", ignore.strand = TRUE))]$gene_name)
+```
+
+What is the overlap between the two samples?
+```{r, warning = FALSE, message = FALSE}
+sns_gr_top[overlapsAny(sns_gr_top, hom_gr_top, type = "equal")]
+hom_gr_top[overlapsAny(hom_gr_top, sns_gr_top, type = "equal")]
+```
+
+Most genes from the bottom right point cloud contain BSJ with >5 reads. This might be an explanation, why these genes have so many reads in the SNS sample.
+
+```{r, warning = FALSE, message = FALSE}
+c("Meg3", "Pcdh9", "Malat1", "Gm20417", "Snhg11", "Kcnip4", "Csmd1", "Rn7sk") %in% 
+unique(genes[subjectHits(findOverlaps(sns_gr_top, genes, type = "within", ignore.strand = TRUE))]$gene_name)
+
+c("Meg3", "Pcdh9", "Malat1", "Gm20417", "Snhg11", "Kcnip4", "Csmd1", "Rn7sk") %in% 
+unique(genes[subjectHits(findOverlaps(hom_gr_top, genes, type = "within", ignore.strand = TRUE))]$gene_name)
+```
+
+## List of BSJ with >2 supporting reads
+We want to have a list of BSJ that we can compare to existing databases.
+
+```{r, warning = FALSE, message = FALSE}
+tmp1 <- sns_gr[sns_gr$count >= 2]
+tmp1$sample <- "SNS"
+tmp2 <- hom_gr[hom_gr$count >= 2]
+tmp2$sample <- "homogenate"
+
+circ_star <- c(tmp1, tmp2)
+circ_star <- circ_star[order(circ_star$count, decreasing = TRUE)]
+
+write.table(circ_star, file = here("circRNA", "STAR_BSJ_min2_reads.txt"), 
+            quote = FALSE, sep = "\t", row.names = FALSE)
+head(as.data.frame(circ_star))
+```
+
+
+# CIRCexplorer2 results
+
+The CIRCexplorer2 results are reported in a BED file with 0 based coordinates. After importing, the star and end positions are the start of the first exon in the circRNA and the end is the end of the circRNA (NOT the donor and acceptor coordinates)
+
+```{r}
+sns_ce <- import(here("CIRCexplorer2", "SNS_70K_circularRNA_known.bed"))
+hom_ce <- import(here("CIRCexplorer2", "HOMO_70K_circularRNA_known.bed"))
+
+names(mcols(sns_ce))[4:9] <- c("readNumber", "circType",  "geneName", "isoformName", "exon_index", "flankIntron")
+names(mcols(hom_ce))[4:9] <- c("readNumber", "circType",  "geneName", "isoformName", "exon_index", "flankIntron")
+         
+mcols(sns_ce)[c(3, 8, 9, 10, 11)] <- NULL
+mcols(hom_ce)[c(3, 8, 9, 10, 11)] <- NULL
+
+## Number of circRNAs
+length(sns_ce)
+length(hom_ce)
+
+## Number of circRNAS per gene
+table(sns_ce$geneName)
+table(hom_ce$geneName)
+
+## circRNAs with the highest number of supporting reads
+sns_ce <- sns_ce[order(sns_ce$readNumber, decreasing = TRUE)]
+hom_ce <- hom_ce[order(hom_ce$readNumber, decreasing = TRUE)]
+
+## Overlap of the two samples
+sns_ce[overlapsAny(sns_ce, hom_ce, type = "equal")]
+
+## Genes with circRNAs in both samples
+sns_ce$geneName[sns_ce$geneName %in% hom_ce$geneName]
+```
+
+## Types of circular RNAs
+
+circRNA = circular RNA
+
+ciRNA = circular intronic lon non-coding RNAs
+
+```{r}
+table(sns_ce$circType)
+table(hom_ce$circType)
+
+unique(sns_ce[sns_ce$circType == "ciRNA"]$geneName)
+unique(hom_ce[hom_ce$circType == "ciRNA"]$geneName)
+```
+
+Trpm3 and Acsl6 are the only genes that are in our target gene list and that have a ciRNA in the homogenate sample!
+
+
+## List of circRNAs from CIRCexplorer2 with >2 supporting reads
+Create a single list and indicate in which sample the circRNA was found.
+```{r}
+tmp1 <- sns_ce[sns_ce$readNumber >= 2]
+tmp1$sample <- "SNS"
+
+tmp2 <- hom_ce[hom_ce$readNumber >= 2]
+tmp2$sample <- "homogenate"
+
+circ_ce <- c(tmp1, tmp2)
+circ_ce <- circ_ce[order(circ_ce$readNumber, decreasing = TRUE)]
+
+write.table(circ_ce, file = here("circRNA", "CIRCexplorer2_min2_reads.txt"), 
+            quote = FALSE, sep = "\t", row.names = FALSE)
+```
+
+# Comparion of STAR BSJ and CIRCexplorer2 results
+
+```{r}
+table(overlapsAny(circ_ce, circ_star, ignore.strand = TRUE, type = "equal"))
+olap <- findOverlaps(circ_ce, circ_star, ignore.strand = TRUE, type = "equal")
+unique(circ_ce[queryHits(olap)]$geneName)
+```
+
+# Comparison with circBase
+
+How many of the STAR BSJ overlap with annotated circRNAs from circBase?
+
+We downloaded a list with all mouse brain expressed circRNAs from [TSCD](http://gb.whu.edu.cn/TSCD/) (mm10_adult_circRNA.txt).
+To construct the table, the authors downloaded RNA-samples from SRA and applied 3 circRNA prediction methods (CIRI, circRNA_finder, find_circ). They kept the circRNAs identified by either one of three algorithms and required>2 junction reads.
+
+The circRNA annotation file ``mmu_mm9_Rybak2015_frontal_cortex.txt` was downloaded from [circBase](http://circbase.org/cgi-bin/downloads.cgi). We had to modify the header line to read it into R.
+
+The circRNA annoation is based on mm9, so we need to lift it over to mm10 if we want to compare it with our BSJs. For this, we use the R function `liftOver` from the `rtracklayer` package. The chain file was downloaded from [UCSC](https://hgdownload-test.gi.ucsc.edu/goldenPath/mm9/liftOver/).
+
+```{r}
+chain <- import.chain(here("reference", "mm9ToMm10.over.chain"))
+library("TxDb.Mmusculus.UCSC.mm9.knownGene")
+# circ_fc <- read.table(here("circRNA", "mmu_mm9_Rybak2015_frontal_cortex.txt"), sep = "\t", header = TRUE)
+circ_fc <- fread(here("circRNA", "mmu_mm9_Rybak2015_frontal_cortex.txt"))
+circ_fc <- makeGRangesFromDataFrame(circ_fc, keep.extra.columns=TRUE)       
+circ_fc_mm10 <- liftOver(circ_fc, chain)
+## A few circRNAs have more than one mapping in the mm10 mouse genome, we will keep all of them for now
+table(lengths(circ_fc_mm10))
+circ_fc_mm10 <- unlist(circ_fc_mm10)
+```
+
+We overlap the STAR BSJ with >= 2 supporting reads with the annotations because we want to know how many of the events are known.
+Before we can to that, we have to convert the circRNA annotation to Ensembl
+```{r}
+seqlevelsStyle(circ_fc_mm10) <- "Ensembl" 
+## how many BSJ are already known? (independent of strand and arbitrary overlap)
+table(overlapsAny(circ_star, circ_fc_mm10, ignore.strand = TRUE, minoverlap = 40))
+## on the same strand
+table(overlapsAny(circ_star, circ_fc_mm10, ignore.strand = FALSE, minoverlap = 40))
+subsetByOverlaps(circ_star, circ_fc_mm10, ignore.strand = FALSE, minoverlap = 40)
+## What are the genes that have overlapping circRNA annotation and BSJs?
+unique(subsetByOverlaps(circ_fc_mm10, circ_star, ignore.strand = FALSE)$gene_symbol)
+```
+Calm1 is a target gene that had some of the top peaks in the SNS sample.
+
+Csmd1 is a gene from the MA plot bottom-right point cloud with equal coverage in SNS and homogenate. It has even slightly higher coverage in SNS although the gene expression is higher in homogenate.
+
+
+We compar the annotation with the CIRCexplrer2 results
+```{r}
+## how many BSJ are already known? (independent of strand and arbitrary overlap)
+table(overlapsAny(circ_ce, circ_fc_mm10, ignore.strand = TRUE))
+## on the same strand
+table(overlapsAny(circ_ce, circ_fc_mm10, ignore.strand = FALSE))
+subsetByOverlaps(circ_ce, circ_fc_mm10, ignore.strand = FALSE)
+## What are the genes that have overlapping circRNA annotation and BSJs?
+unique(subsetByOverlaps(circ_ce, circ_fc_mm10, ignore.strand = FALSE)$geneName)
+```
