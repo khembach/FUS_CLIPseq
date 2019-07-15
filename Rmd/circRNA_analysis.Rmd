@@ -279,7 +279,7 @@ To construct the table, the authors downloaded RNA-samples from SRA and applied 
 
 The circRNA annotation file ``mmu_mm9_Rybak2015_frontal_cortex.txt` was downloaded from [circBase](http://circbase.org/cgi-bin/downloads.cgi). We had to modify the header line to read it into R.
 
-The circRNA annoation is based on mm9, so we need to lift it over to mm10 if we want to compare it with our BSJs. For this, we use the R function `liftOver` from the `rtracklayer` package. The chain file was downloaded from [UCSC](https://hgdownload-test.gi.ucsc.edu/goldenPath/mm9/liftOver/).
+The circRNA annotation is based on mm9, so we need to lift it over to mm10 if we want to compare it with our BSJs. For this, we use the R function `liftOver` from the `rtracklayer` package. The chain file was downloaded from [UCSC](https://hgdownload-test.gi.ucsc.edu/goldenPath/mm9/liftOver/).
 
 ```{r}
 chain <- import.chain(here("reference", "mm9ToMm10.over.chain"))
@@ -310,7 +310,7 @@ Calm1 is a target gene that had some of the top peaks in the SNS sample.
 Csmd1 is a gene from the MA plot bottom-right point cloud with equal coverage in SNS and homogenate. It has even slightly higher coverage in SNS although the gene expression is higher in homogenate.
 
 
-We compar the annotation with the CIRCexplrer2 results
+We compare the annotation with the CIRCexplorer2 results
 ```{r}
 ## how many BSJ are already known? (independent of strand and arbitrary overlap)
 table(overlapsAny(circ_ce, circ_fc_mm10, ignore.strand = TRUE))
