@@ -1,0 +1,174 @@
+---
+title: "Filter FUS target genes"
+author: "Katharina Hembach"
+date: "9/26/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+suppressPackageStartupMessages({
+  library(here)
+  library(dplyr)
+  library(rtracklayer)
+  library(GenomicRanges)
+  library(limma)
+  library(data.table)
+})
+```
+
+```{r}
+fus_targets <- here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno.txt")
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+fus_peaks <- here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05.bed")
+```
+
+# Introduction
+
+Here we analysis the FUS target genes and want to identify genes that are overlapping with other annotated genes.
+The reason is that if a gene shares UTR regions or exon with other genes and the FUS CLIP-seq has a peak in that region, this does not tell us which of the overlapping genes is actually bound by the protein. In such cases, we need to look at the genomic region in the genome brower to compare the CLIP coverage pattern with the annotation. 
+
+# Identification of overlapping genes
+
+We overlap all FUS target genes with the mouse gene annotations to identify regions with more than one gene annotated.
+
+```{r}
+fus_tar <- read.table(fus_targets, header = TRUE)
+gtf <- import(gtf_file)
+```
+```{r}
+# identify all target genes that overlap with other genes
+genes_all <- gtf[gtf$type == "gene"]
+fus <- genes_all[genes_all$gene_id %in% fus_tar$gene_id]
+genes <- genes_all[!genes_all$gene_id %in% fus$gene_id]
+
+fus_olap <- subsetByOverlaps(fus, genes, ignore.strand = FALSE)
+length(fus_olap)
+
+fus_olap$gene_name
+
+write.table(x = fus_olap$gene_name, 
+            file = here("Rmd/filter_FUS_targets_files/overlapping_FUS_targets.txt"),
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+
+```{r}
+# identify all selected peaks that overlap with more than one genes
+peaks <- import(fus_peaks)
+olap <- countOverlaps(peaks, genes_all, ignore.strand = TRUE)
+
+peaks[olap>0]
+
+genes_all[genes_all$gene_id %in% peaks[olap>1]$name]$gene_name
+
+write.table(x = genes_all[genes_all$gene_id %in% peaks[olap>1]$name]$gene_name, 
+            file = here("Rmd/filter_FUS_targets_files/peaks_overlapping_annotation.txt"),
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+
+# Gene filtering
+
+I looked at all genes and the significant CLIP peak in IGV and identified all genes that are wrongly classified as bound because the CLIP-seq coverage is on the other strand or the gene is overlapping another genes on the same strand. If I was unsure, I added a comment to the table, but I will not remove the gene from the list. The manually filtered gene list with comments was saved as excel workbook in `./Rmd/filter_FUS_targets_files/peaks_overlapping_annotation_manually_filtered.xlsx` and as tab separated list in `./Rmd/filter_FUS_targets_files/peaks_overlapping_annotation_manually_filtered.txt`. The column `label` has `T` for true FUS targets and `F` for false positive targets.
+
+We read the filtered list and remove the wrong targets from the gene list.
+
+```{r}
+filtered <- fread(here("/Rmd/filter_FUS_targets_files/peaks_overlapping_annotation_manually_filtered.txt"), 
+                  sep = "\t")
+fp <- filtered[label == "F", gene]  ## all false positive FUS targets
+fp
+fp_ensembl <- genes_all$gene_id[match(fp, genes_all$gene_name)]
+
+## List of wrong FUS targets
+fus_tar[fus_tar$gene_name %in% fp,]
+```
+
+Many of the filtered genes are not protein coding.
+
+```{r}
+## remove the wrong genes from the gene list!
+fus_tar_filterd <- fus_tar[! fus_tar$gene_name %in% fp,]
+
+write.table(fus_tar_filterd, here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno_manually_filtered.txt"), row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+# Peak filtering
+
+We filtered the wrongly predicted genes, but we also need to remove the peaks that correspond to these genes. In theory, each of peaks from the wrong genes should have a different peaks at the exact same location that belongs to the true FUS target. 
+
+Firs, we make sure that this is the case and identify all peaks that belong to wrong genes. Then we count if all of them overlap with a second peak at the same location.
+
+
+```{r}
+fp_peaks <- peaks[peaks$name %in% fp_ensembl]
+## all peaks that overlap with at least one other peaks 
+subsetByOverlaps(fp_peaks, peaks[! peaks$name %in% fp_ensembl], 
+                 type = "any", ignore.strand = TRUE)
+
+## all peaks that do not overlap with a second peaks in the same location
+subsetByOverlaps(fp_peaks, peaks[! peaks$name %in% fp_ensembl], 
+                 type = "any", ignore.strand = TRUE, invert = TRUE)
+```
+Nearly all wrong peaks do overlap with at least one other peak. However, there are few regions where we only have a peak with a wrongly associated gene. We do not remove any peaks, because we do not want to miss any region bound by FUS.
+
+
+Note: The peaks are not affected by the gene filtering, because we decided to not remove any of them. We only remove overlapping gene annotations, but not the actual peaks!
+
+
+## ORA analysis
+We repeat the ORA and KEGG analysis to make sure that they are unaffected by the filtering.
+
+```{r}
+## All target genes and entrez ids
+entrez_loess <- readRDS(here("Rmd", "rds", "entrez_loess.rds"))  
+
+entrez_filtered <- entrez_loess %>%
+  dplyr::filter(!ensembl_gene_id %in% fp_ensembl) 
+
+# ## SNS BG of new RNA-seq (SNS WT 6 monts)
+# sns_bg <- readRDS(here("Rmd", "rds", "sns_bg_entrez.rds"))
+
+## BG of the old RNA-seq!! SNS WT 1 month
+ sns_bg_entrez <- readRDS(here("Rmd", "rds", "sns_bg_entrez.rds"))  
+```
+
+```{r}
+# Match gene length to bg list
+# genes <- anno[["gene"]]
+m <- match(sns_bg_entrez$ensembl_gene_id, genes_all$gene_id)
+gene_length <- width(genes_all)[m]
+
+## GO analysis with goana using gene length as covariate
+goana_loess <- goana(de = unique(entrez_filtered$entrezgene), species = "Mm", 
+                   universe = sns_bg_entrez$entrezgene_id, covariate = gene_length)
+goana_loess <- goana_loess[order(goana_loess$P.DE, decreasing = FALSE),]
+## What are the most enriched annotation terms?
+topGO(goana_loess, ontology = "CC", number = 20)
+topGO(goana_loess, ontology = "BP", number = 10)
+topGO(goana_loess, ontology = "MF", number = 10)
+```
+
+The results did not change, we still have the same terms, but slightly better p-values.
+
+## KEGG pathways
+
+```{r}
+## one-sided hypergeometric tests
+kegga_res<- kegga(de = unique(entrez_filtered$entrezgene), species = "Mm",
+                   universe = sns_bg_entrez$entrezgene)
+## sort the pathways after raw p-value
+kegga_res <- kegga_res[order(kegga_res$P.DE, decreasing = FALSE),]
+topKEGG(kegga_res, number = 20)
+```
+
+
+
