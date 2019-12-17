@@ -34,3 +34,6 @@ clip_March2018.Rproj
 scripts/clip_counts_mark.R
 Rmd/mark_play.R
 Rmd/rds/
+Rmd/unmapped_reads_analysis_figures/
+Rmd/target_gene_selection_analysis_figures/
+Rmd/target_gene_binding_classification_figures/
