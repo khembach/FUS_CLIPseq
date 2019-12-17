@@ -18,6 +18,7 @@ library(rmarkdown)
 library(here)
 library(rtracklayer)
 library(data.table)
+library(GenomicFeatures)
 ```
 
 
@@ -320,3 +321,59 @@ subsetByOverlaps(circ_ce, circ_fc_mm10, ignore.strand = FALSE)
 ## What are the genes that have overlapping circRNA annotation and BSJs?
 unique(subsetByOverlaps(circ_ce, circ_fc_mm10, ignore.strand = FALSE)$geneName)
 ```
+None of the annotated circRNAs has identical donor and acceptor to our BSJ.
+
+
+# circRNAs matching exon boundaries
+
+How many of the BSJ match annotated exons? How many are located within introns?
+
+We take all BSJ located within gene boundaries and count how many of the donor and acceptor sites overlap with annotated exons starts/ends.
+
+```{r BSJ-matching-exon-boundaries}
+exons <- unique(gtf[gtf$type %in% c("exon", "five_prime_utr", "three_prime_utr")])
+
+## SNS
+table(start(sns_gr) %in% unique(end(exons)))
+table(end(sns_gr) %in% unique(start(exons)))
+# Which BSJ overlap exons on both donor and acceptor?
+acc <- which(start(sns_gr) %in% unique(end(exons)))
+donor <- which(end(sns_gr) %in% unique(start(exons)))
+intersect(acc, donor)
+
+### total cortex sample
+table(start(hom_gr) %in% unique(end(exons)))
+table(end(hom_gr) %in% unique(start(exons)))
+
+# Which BSJ overlap exons on both donor and acceptor?
+acc <- which(start(hom_gr) %in% unique(end(exons)))
+donor <- which(end(hom_gr) %in% unique(start(exons)))
+
+intersect(acc, donor)
+```
+A few donor and acceptor sites overlap with existing exon annotations, but the majority does not. None of the BSJ matches both the donor and acceptor.
+
+How many BSJ are located within exons?
+```{r, warning=FALSE}
+table(overlapsAny(sns_gr, exons, type = "within", ignore.strand = TRUE))
+table(overlapsAny(hom_gr, exons, type = "within", ignore.strand = TRUE))
+
+```
+
+
+## Intronic BSJ
+
+How many BSJ are intronic (donor and acceptor in intron)?
+
+```{r, warning=FALSE}
+txdb <- makeTxDbFromGRanges(gr = gtf)
+introns <- intronsByTranscript(txdb)
+introns <- unique(unlist(introns))
+
+table(overlapsAny(sns_gr, introns, type = "within", ignore.strand = TRUE))
+table(overlapsAny(hom_gr, introns, type = "within", ignore.strand = TRUE))
+
+```
+
+
+
