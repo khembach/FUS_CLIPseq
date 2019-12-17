@@ -1,3 +1,4 @@
+library(GenomicFeatures)
 
 #' Import CLIPper peaks
 #'
@@ -50,7 +51,7 @@ read_omni <- function(path = NA, metadat = NA) {
 #' Prepare gtf annotation
 #'
 #' Split GTF annotation into intron, exon, 3'UTR and 5'UTR. Exons that overlap
-#' with UTRs are counted as UTRs.
+#' with UTRs are counted as UTRs!
 #'
 #' @param gtf GRanges object
 #'
@@ -72,7 +73,7 @@ prepare_anno <- function(gtf){
   exon_three_utr <- c(exon_three_utr, three_utr) %>% unique
   exon_five_utr <- c(exon_five_utr, five_utr) %>% unique
   
-  anno <- list(gene = gene, exon = exon_unique, three_prime_utr = exon_three_utr, 
+  anno <- GRangesList(gene = gene, exon = exon_unique, three_prime_utr = exon_three_utr, 
                five_prime_utr = exon_five_utr)
   
   ## intron annotation
