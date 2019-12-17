@@ -1,0 +1,1255 @@
+---
+title: "FUS target gene selection and analysis"
+author: "Katharina Hembach"
+date: "7/17/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, message=FALSE}
+library(here)
+library(rtracklayer)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(tximport)
+library(biomaRt)
+# library(ComplexHeatmap)
+library(Rsamtools)
+library(edgeR)
+library(viridis)
+library(GenomicAlignments)
+library(GenomicFeatures)
+library(ggrepel)
+library(scales)
+```
+
+
+# Data import
+
+```{r paths}
+source(here("R", "data_import.R"))
+
+# gtf_file <- "/Volumes/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+out_dir <- here("analysis", "deduplicated", "MA_plot_selection")
+metadat <- read.table(here("metadata.txt"), header = TRUE)
+```
+
+```{r anno-prep, cache = TRUE}
+gtf <- import(gtf_file)
+anno <- prepare_anno(gtf)
+```
+
+
+```{r clipper-peaks, cache = TRUE}
+###### Read the CLIP peaks -----------------------------------------------------
+clipper <- read_clipper(here("clipper"), snames = c("HOMO_70K", "SNS_70K"))
+## convert CLIPper peaks to Ensembl annotation
+for (sample in names(clipper)){
+  seqlevels(clipper[[sample]]) <- gsub("chr", "", seqlevels(clipper[[sample]]))
+}
+```
+
+# CLIP-seq read counts in CLIPper peaks
+
+We count the number of reads that overlap each of the SNS CLIPper peaks.
+```{r peak-read-count, cache = TRUE}
+if (file.exists(here("Rmd", "rds", "clipper_peaks_read_count.rds"))) {
+  counts <- readRDS(here("Rmd", "rds", "clipper_peaks_read_count.rds"))  
+} else{
+  sns_ids <- paste(seqnames(clipper[["SNS_70K"]]), start(clipper[["SNS_70K"]]), 
+                   end(clipper[["SNS_70K"]]), sep = "_")
+  
+  counts <- list()
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    bf <- BamFile(here("BAM_deduplicated", sample, 
+                                   paste0(sample, "_deduplicated.bam")))
+    asMates(bf) <- TRUE
+    param <- ScanBamParam(which = clipper[["SNS_70K"]])
+    counts[[sample]] <- countBam(bf, param = param)
+    counts[[sample]]$peak_id <- paste(counts[[sample]]$space, 
+                                      counts[[sample]]$start, 
+                                      counts[[sample]]$end, sep = "_")
+    ## order the counts according to initial peak ordering
+    m <- match(sns_ids, counts[[sample]]$peak_id)
+    counts[[sample]] <- counts[[sample]][m,]
+  }
+}
+```
+
+```{r save-counts-rds, include = FALSE, eval = FALSE}
+saveRDS(counts, file = here("Rmd", "rds", "clipper_peaks_read_count.rds"))
+```
+
+
+# MA-plot
+
+We make an MA plot of all the `r length(clipper["SNS_70K"])` CLIPper peaks from cortical SNS.
+
+* M = log2((x1 + o) / (lib.size1 + o)) - log2((x2 + o) / (lib.size2 + o))
+* A = (log2(x1 + o) + log2(x2 + o)) / 2
+
+Where o is an offset (1) and lib.size 1 and 2 are the normalized library size of the two samples (the number of reads mapping to the CLIPper peaks). 
+
+##  LOESS fit 
+
+We fit a LOESS curve through the MA plot. Then, we adjust the M values by the LOESS fit, such that the fit is on y = 0. 
+
+```{r export-objects-mark, include = FALSE, eval = TRUE}
+if (!file.exists(here("Rmd", "rds", "peak_counts.RDS"))){
+  cts_clip <- data.frame(SNS = counts[["SNS_70K"]]$record, 
+                         homogenate = counts[["HOMO_70K"]]$records)
+  
+  dge <- edgeR::DGEList(cts_clip, group = factor(colnames(cts_clip)))
+  dge <- edgeR::calcNormFactors(dge)
+  
+  saveRDS(dge, here("Rmd", "rds", "peak_counts.RDS"))
+}
+```
+
+```{r loess-lib-size-corrected, cache = TRUE}
+dge <- readRDS(here("Rmd", "rds", "peak_counts.RDS"))
+o <- 1
+lib.size <- with(dge$samples, lib.size*norm.factors)
+
+M <- log2((dge$counts[,1] + o) / (lib.size[1] + o)) - 
+  log2((dge$counts[,2] + o) / (lib.size[2] + o))
+A <- (log2(dge$counts[,1] + o) + log2(dge$counts[,2] + o)) / 2
+
+df_raw <- data.frame(M = M, A = A)
+
+fit <- loess(formula = M~A, data=df_raw, span=1/4, family="symmetric",
+             degree = 1, iterations = 4)
+
+## compute the predicted value for each A and 
+fitted_M <- predict(fit, newdata = data.frame(A = A))
+table(is.na(fitted_M))
+
+## Adjust the M value by the fit
+adj_M <- M - fitted_M
+```
+
+```{r raw-MA-plot-LOESS, cache = TRUE}
+## Raw MA-plot
+ggplot(df_raw, aes(x = A, y = M)) +
+  geom_point(alpha = 0.2, color = "darkgrey") +
+  stat_density2d(aes(fill=..level.., alpha = ..level..), geom='polygon',
+                 colour='black') +
+  scale_fill_viridis() +
+  theme_bw()
+
+## Raw MA-plot with the LOESS fit
+ggplot(df_raw, aes(x = A, y = M)) +
+  geom_point(alpha = 0.2, color = "darkgrey") +
+  stat_density2d(aes(fill=..level.., alpha = ..level..), geom='polygon',
+                 colour='black') +
+  scale_fill_viridis() +
+  theme_bw() + 
+  geom_line(aes(x = A,y = fitted(fit)), color = "red", linetype = 2)
+```
+
+```{r adj-MA-plot-LOESS, cache = TRUE}
+## LOESS adjustment
+data.frame(adjusted_M = adj_M, A = A) %>%
+ggplot(aes(x = A, y = adjusted_M)) +
+  geom_point(alpha = 0.2, color = "darkgrey") +
+  stat_density2d(aes(fill=..level.., alpha = ..level..), geom='polygon',
+                 colour='black') +
+  scale_fill_viridis() +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 0, color = "red", linetype = 2)
+```
+
+
+
+## edgeR p-value for peak ranking
+
+We want to rank the peaks by the edgeR p-value. We don't have replicates, so we can only compute the common dispersion of all peaks. The common dispersion assumes that all peaks have the same mean-variance relationship, in other words, the dispersion is the same for all the peaks.
+We compute the common dispersion from the genes at the center of the main point cloud (-3 < y < 1). Then we subtract the fitted M-values from the offset. The offset is computed as `log(lib.size*norm.factors)`. This way, we can use the adjustments from the LOESS fit for inference.
+We fit a negative binomial generalized log-linear model using the peak specific offset and test each peaks with a likelihood ratio test for 
+equality.
+
+```{r adjust-MA-edgeR-kathi2, cache = TRUE}
+dge <- readRDS(here("Rmd", "rds", "peak_counts.RDS"))
+dge2 <- dge
+
+## Assuming that our M-values are shifted by -1 for high A values. We take the peaks at the center of the point cloud with common peaks between SNS and homogenate.
+k <- M > -3 & M < 1
+
+## We only consider a subset of peaks for the dispersion estimation
+dge2$samples$group <- "common"
+dge2$samples$group <- factor(dge2$samples$group)
+
+dge2 <- estimateCommonDisp(dge2[k,])
+dge2$common.dispersion
+
+## Compute offset
+offsets <- matrix(getOffset(dge), 
+                  nrow=nrow(dge), ncol=2, byrow=TRUE)
+offsets[,2] <- offsets[,2] - fitted_M
+dge$offset <- offsets
+
+## Fit model
+mm <- model.matrix(~group, dge$samples)
+f <- glmFit(dge, mm, dispersion = dge2$common.dispersion)
+lrt <- glmLRT(f)
+```
+
+
+```{r MA-pValue-viridis, cache = TRUE}
+## highlight p-value in plot 
+ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
+  geom_point() + 
+  geom_density_2d(colour="white") + 
+  theme_bw() +
+  scale_color_viridis() +
+  theme(text = element_text(size = 20), aspect.ratio = 1, 
+        plot.title = element_text(hjust = 0.5)) +
+  labs(color = "-log10(p-value)") +
+  guides(color = guide_colourbar(barwidth = 1, barheight = 10)) +
+  ggtitle("cortical SNS")
+
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "MA_pValue.png"), width = 7, height = 5.5)
+```
+
+
+
+## Number of peaks and genes at different p-value cutoffs
+
+To get our final list of target genes, we try different p-value cutoffs and exclude all peaks with a p-value above the cutoff.
+
+```{r loess-p-value-different-cutoffs, cache = TRUE}
+peaks_list_pValue <- GRangesList(
+  pVal_1em5 = clipper[["SNS_70K"]][lrt$table$PValue < 0.00001 & lrt$table$logFC > 0],
+  pVal_5em5 = clipper[["SNS_70K"]][lrt$table$PValue < 0.00005 & lrt$table$logFC > 0],
+  pVal_1em4 = clipper[["SNS_70K"]][lrt$table$PValue < 0.0001 & lrt$table$logFC > 0],
+  pVal_5em4 = clipper[["SNS_70K"]][lrt$table$PValue < 0.0005 & lrt$table$logFC > 0],
+  pVal_1em3 = clipper[["SNS_70K"]][lrt$table$PValue < 0.001 & lrt$table$logFC > 0],
+  pVal_5em3 = clipper[["SNS_70K"]][lrt$table$PValue < 0.005 & lrt$table$logFC > 0],
+  pVal_1em2 = clipper[["SNS_70K"]][lrt$table$PValue < 0.01 & lrt$table$logFC > 0],
+  all_peaks = clipper[["SNS_70K"]])
+
+lapply(peaks_list_pValue, function(x) c(length(x), unique(x$gene_id) %>% length()))
+```
+
+
+```{r loess-p-value-different-cutoffs-barplot, cache = TRUE}
+peak_gene_region_barplot <- function(peaks, anno) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  print(df)
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text = element_text(size = 20),
+                axis.text.x = element_text(angle = 45, hjust = 1,
+                                           face = c(rep("plain", 7), "bold")),
+                legend.position = "bottom", legend.direction="horizontal", 
+                legend.box = "horizontal",
+                plot.title = element_text(hjust = 0.5))  +
+          ylab("% of peaks") +
+          labs(fill = "location") +
+          scale_x_discrete(breaks=c("all_peaks", "pVal_1em2", "pVal_5em3", 
+                              "pVal_1em3","pVal_5em4", "pVal_1em4", "pVal_5em5",
+                              "pVal_1em5"), 
+                           labels=c("no cutoff", "1e-2", "5e-3", "1e-3", "5e-4", 
+                                    "1e-4", "5e-5", "1e-5"),
+                           limits = c("all_peaks", "pVal_1em2", "pVal_5em3", 
+                              "pVal_1em3","pVal_5em4", "pVal_1em4", "pVal_5em5",
+                              "pVal_1em5"),
+                           name = "p-value cutoff") +
+           scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+                             values = c("exon" = "#9C3B8C", 
+                                        "five_prime_utr" = "#43BB5F",
+                                        "three_prime_utr" = "cyan4", 
+                                        "intron" = "#7BAFDE")) +
+          ggtitle("cortical SNS")
+  )
+}
+
+peak_gene_region_barplot(peaks_list_pValue, anno)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "pValue_cutoffs_barplot.png"), width = 5, height = 5)
+```
+
+```{r loess-p-value-cutoffs-target-genes, cache = TRUE}
+pValue_cut <- 0.00001
+loess_peaks <- peaks_list_pValue[["pVal_1em5"]]
+loess_peaks <- add_gene_annotation(loess_peaks, anno[["gene"]])
+
+loess_targets <- loess_peaks %>%
+    as.data.frame() %>%
+    dplyr::group_by(gene_id) %>%
+    dplyr::select(seqnames, gene_id, gene_name, gene_biotype) %>%
+    dplyr::mutate(nr_peaks = dplyr::n()) %>%
+    dplyr::arrange(desc(nr_peaks)) %>%
+    unique()
+head(loess_targets)
+
+write.table(loess_targets,
+            file = file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
+                                             pValue_cut, "_gene_anno.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+```
+
+
+Write a BED file with the location of the selected peaks.
+```{r export-SNS-BED}
+bed_file <- file.path(out_dir, "selected_peaks", 
+                      paste0("selected_peaks_SNS_pValue_", 
+                             pValue_cut, ".bed"))
+if(!file.exists(bed_file)) {
+  export(loess_peaks, bed_file)
+}
+```
+
+```{r barplot-peak-location-comparison-SNS, cache = TRUE}
+peak_gene_region_barplot_subs <- function(peaks, anno) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text = element_text(size = 20))  +
+          ylab("% of peaks") +
+          labs(fill = "location") +
+          scale_x_discrete(breaks=c("all_peaks", "pVal_1em5"), 
+                           labels=c("all", "selected"),
+                           limits = c("all_peaks", "pVal_1em5"),
+                           name = "peaks") +
+           scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+                             values = c("exon" = "#9C3B8C", 
+                                        "five_prime_utr" = "#43BB5F",
+                                        "three_prime_utr" = "cyan4", 
+                                        "intron" = "#7BAFDE"))
+  )
+}
+subs_sns <- peaks_list_pValue[c("all_peaks", "pVal_1em5")]
+
+peak_gene_region_barplot_subs(subs_sns, anno)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "pValue_single_cutoff_barplot.png"), width = 5, height = 5)
+```
+
+
+We decide on the smallest test p-value of `r pValue_cut`, because it gives us the strongest enrichment of exonic and 3'UTR peaks and a depletion of intronic peaks (compared to all SNS CLIPper peaks).
+
+```{r MA-loess-p-value-cutoff, dependson = "loess-p-value-different-cutoffs", cache = TRUE}
+ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0)) +
+  geom_point(alpha = 0.2) + 
+  geom_density_2d(colour="black") + 
+  theme_bw() +
+  labs(color = paste0("p-value < ", pValue_cut)) + 
+  theme(text = element_text(size = 20)) +
+  scale_color_manual(values = c("FALSE" = "darkgrey", "TRUE" = "brown3"), 
+                     labels = c("\u2265 1e-05", "< 1e-05")) +
+  labs(color = "p-value") +
+  theme(aspect.ratio = 1) +
+  guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5)))
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "MA_pValue_cutoff_brown3.png"), width = 6.4, height = 5)
+
+## other color posibility is "firebrick3"
+```
+
+## ORA
+
+We conduct over representation analysis to characterize the target gene list and use a p-value cutoff of `r pValue_cut`.
+
+The background are all genes that have a cpm >1 in the two RNA-seq samples.
+
+### expressed SNS genes from poly-A RNA-seq
+
+```{r read-salmon-counts, cache = 2}
+salmon_base_dir <- "/Volumes/Shared/data/seq/sonu_RNAseq/"
+salmon_dir_name <- "salmon_bias"
+
+samples <- list.files(file.path(salmon_base_dir, salmon_dir_name), 
+                      pattern = "^20170214.B-WT*")
+files <- file.path(file.path(salmon_base_dir, salmon_dir_name), 
+                   samples, "quant.sf")
+samples <- str_split(samples, pattern = "-", simplify = TRUE)[ ,2]
+samples <- gsub(pattern = "_R1", replacement = "", x = samples)
+names(files) <-  samples
+grp <- str_split(samples, pattern = "_", simplify = TRUE)
+grp <- as.factor(paste0(grp[ ,1], "_", grp[ ,2]))
+sample_nr <- str_split(samples, pattern = "_", simplify = TRUE)[,3]
+
+tx2gene<- unique(mcols(gtf)[c("transcript_id", "gene_id")])
+tx2gene <- tx2gene[!is.na(tx2gene$transcript_id), ]
+tx2gene <- tx2gene[order(tx2gene$transcript_id), ]
+## gene level counts
+txi <- tximport(files, type="salmon", txIn = TRUE, tx2gene = tx2gene, 
+                txOut=FALSE, countsFromAbundance = "no", ignoreTxVersion = TRUE)  
+tpms <- txi$abundance  # tpm per gene
+```
+
+```{r salmon-dge-object, cache = 2, dependson = "read-salmon-counts"}
+## Extract count matrix and average transcript lengths
+salmon_counts <- round(txi$counts)
+cts <- salmon_counts[rowSums(is.na(salmon_counts)) == 0, ]
+normMat <- txi$length[match(rownames(cts), rownames(txi$length)),
+                      match(colnames(cts), colnames(txi$length))]
+normMat <- normMat/exp(rowMeans(log(normMat)))
+normCts <- cts/normMat
+## Generate offset matrix
+eff.lib <- edgeR::calcNormFactors(normCts) * colSums(normCts)
+normMat <- sweep(normMat, 2, eff.lib, "*")
+normMat <- log(normMat)
+## Create DGEList object and add offsets
+dge0 <- edgeR::DGEList(cts, group = grp)
+dge0 <- edgeR::scaleOffset(dge0, normMat)
+dge0 <- edgeR::calcNormFactors(dge0)
+```
+
+### Entrez ID conversion
+
+```{r entrez-id-conversion, cache = TRUE, dependson = "salmon-dge-object"}
+## Not all mRNAs are present in the SNS sample, so we take all expressed genes 
+## >=1cpm in RNA-seq as background.
+## We only consider the first two replicates, because of the coverage profile
+## issue with sample 3
+dge0_sns <- dge0[,c(3, 4)]
+keep <- rowSums(cpm(dge0_sns)>1) == 2 
+dge_sns <- dge0_sns[keep, , keep.lib.sizes = FALSE]
+dim(dge0_sns)
+sns_bg <- rownames(dge0_sns)
+
+if (file.exists(here("Rmd", "rds", "sns_bg_entrez.rds"))) {
+  sns_bg_entrez <- readRDS(here("Rmd", "rds", "sns_bg_entrez.rds"))  
+} else{
+  ## convert to Entrez IDs
+  sns_bg_entrez <- getBM(attributes = c("ensembl_gene_id","entrezgene_id"), 
+                         values = sns_bg, mart = ensembl )
+  sns_bg_entrez <- sns_bg_entrez[sns_bg_entrez$ensembl_gene_id %in% sns_bg, ]
+  saveRDS(sns_bg_entrez, here("Rmd", "rds", "sns_bg_entrez.rds")) 
+}
+```
+
+
+
+```{r loess-ORA-pValue, cache = TRUE, dependson = "loess-p-value-different-cutoffs"}
+loess_genes <- unique(loess_peaks$gene_id)
+
+if (file.exists(here("Rmd", "rds", "entrez_loess.rds"))) {
+  entrez_loess <- readRDS(here("Rmd", "rds", "entrez_loess.rds"))  
+} else{
+  ## convert the Ensembl Gene IDs to entrez Gene IDs with Biomart
+  ensembl <- useMart("ensembl")
+  ensembl <- useDataset("mmusculus_gene_ensembl", mart = ensembl)
+  entrez_ids_pc <- getBM(attributes = c("ensembl_gene_id","entrezgene_id"), 
+               values = loess_genes, mart = ensembl )
+  ## we only keep the genes from our initial list
+  entrez_loess <- entrez_ids_pc[entrez_ids_pc$ensembl_gene_id %in% loess_genes, ]
+  table(is.na(entrez_loess$entrezgene_id))
+
+  saveRDS(entrez_loess, here("Rmd", "rds", "entrez_loess.rds")) 
+}
+
+## Match gene length to bg list
+genes <- anno[["gene"]]
+m <- match(sns_bg_entrez$ensembl_gene_id, genes$gene_id)
+gene_length <- width(genes)[m]
+
+## GO analysis with goana using gene length as covariate
+goana_loess <- goana(de = unique(entrez_loess$entrezgene), species = "Mm", 
+                   universe = sns_bg_entrez$entrezgene, covariate = gene_length)
+goana_loess <- goana_loess[order(goana_loess$P.DE, decreasing = FALSE),]
+## What are the most enriched annotation terms?
+topGO(goana_loess, ontology = "CC", number = 20)
+topGO(goana_loess, ontology = "BP", number = 10)
+topGO(goana_loess, ontology = "MF", number = 10)
+```
+
+```{r write-goana-pValue, include = FALSE, eval = FALSE}
+write.table(topGO(goana_loess, ontology = "CC", number = 100),
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
+                                      pValue_cut, "_goana_CC.txt")),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_loess, ontology = "BP", number = 100),
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_",
+                                      pValue_cut, "_goana_BP.txt")),
+            sep = "\t", quote = FALSE)
+write.table(topGO(goana_loess, ontology = "MF", number = 100),
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", 
+                                      pValue_cut, "_goana_MF.txt")),
+            sep = "\t", quote = FALSE)
+```
+
+### Pre- and postsynaptic genes
+What are the pre- and postsynaptic genes?
+```{r pre-postsynaptic-genes, eval = FALSE}
+## if we only want to check a few genes:
+x <- org.Mm.egGO2ALLEGS
+Rkeys(x) <- "GO:0098793"
+EG <- mappedLkeys(x)
+presynapse <- entrez_loess$ensembl_gene_id[entrez_loess$entrezgene %in% EG]
+presynapse <- mcols(anno[["gene"]][anno[["gene"]]$gene_id %in% presynapse, 
+                                   c("gene_id", "gene_name", "gene_biotype")])
+presynapse$gene_name
+write.table(presynapse, file = file.path(out_dir, 
+                                         paste0("top_peaks_loess_adjM_pValue_", 
+                                                pValue_cut, "_presynapse.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+
+x <- org.Mm.egGO2ALLEGS
+Rkeys(x) <- "GO:0098794"
+EG <- mappedLkeys(x)
+postsynapse <- entrez_loess$ensembl_gene_id[entrez_loess$entrezgene %in% EG]
+postsynapse <- mcols(anno[["gene"]][anno[["gene"]]$gene_id %in% postsynapse, 
+                                   c("gene_id", "gene_name", "gene_biotype")])
+postsynapse$gene_name
+write.table(postsynapse, file = file.path(out_dir, 
+                                         paste0("top_peaks_loess_adjM_pValue_", 
+                                                pValue_cut, "_postsynapse.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+```
+
+### ORA results as circle plot
+
+We plot the ORA analysis as a circle plot. The log2(#target genes with term) is plotted against the -log10(p-value). The size of each size of each circle is proportional to the ratio of (#FUS targets with term) to (# total genes with term). The further to the right, the better the p-value and the further up, the higher the number of target genes with the GO term. So the GO terms with the best enrichment are the biggest circles a the top right.
+
+```{r ORA-circle-plot-CC, cache = TRUE}
+library(ggsci)
+df <- topGO(goana_loess, ontology = "CC", number = 16)
+df
+## we remove nr 14, because it is identical to 13, except for the name
+df <- df[-14,]
+df$Term[10] <- "plasma membrane bounded\ncell projection"
+
+ggplot(df, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = TRUE)) + 
+  geom_point(shape = 21, alpha = 0.8)  +
+  theme_bw() +
+  theme(text = element_text(size = 20), 
+        aspect.ratio = 1, 
+        legend.position = "bottom", legend.direction="horizontal", 
+        legend.box = "horizontal", plot.title = element_text(hjust = 0.5))  +
+  geom_text_repel(aes(label=Term), size=4, data=df, color = "black", 
+                  point.padding = 0.3, box.padding = 0.3, xlim = c(21, NA)) +
+  scale_size(breaks=pretty_breaks(4), range = c(3, 13)) +
+  guides(size = guide_legend("log2(#genes with GO term)", title.position = "top")) +
+  labs(x = "-log10(p-value)", y = "log2(#target genes with GO term)") +
+  ggtitle("Cellular Component") +
+  scale_fill_manual(values = pal_locuszoom()(2)[2]) +
+  guides(fill = FALSE)
+  
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "ORA_circle_plot_CC_final.png"), width = 6, height = 7)
+```
+
+```{r ORA-circle-plot-BP, cache = TRUE}
+df <- topGO(goana_loess, ontology = "BP", number = 15)
+df
+## we remove nr 4, because it is identical to 5 and there is one other category with a similar term
+df <- df[-4,]
+df$Term[1] <- "regulation of\nbiological quality"
+df$Term[3] <- "trans-synaptic\nsignaling"
+df$Term[4] <- "chemical synaptic\ntransmission"
+df$Term[9] <- "modulation of chemical\nsynaptic transmission"
+
+
+ggplot(df, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = TRUE)) + 
+  geom_point(shape = 21, alpha = 0.8)  +
+  theme_bw() +
+  theme(text = element_text(size = 20), 
+        aspect.ratio = 1, 
+        legend.position = "bottom", legend.direction="horizontal", 
+        legend.box = "horizontal", plot.title = element_text(hjust = 0.5))  +
+  geom_text_repel(aes(label=Term), size=4, data=df, color = "black", 
+                  point.padding = 0.3, box.padding = 0.5, xlim = c(13.9, NA)) +
+  scale_size(breaks=pretty_breaks(4), range = c(3, 13)) +
+  guides(size = guide_legend("log2(genes with GO term)", title.position = "top")) +
+  labs(x = "-log10(p-value)", y = "log2(target genes with GO term)")+
+  ggtitle("Biological Process") + 
+  scale_fill_manual(values = pal_locuszoom()(1)) +
+  guides(fill = FALSE)
+  
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "ORA_circle_plot_BP_final.png"), width = 6, height = 7)
+```
+
+
+
+```{r ORA-circle-plot-MF, cache = TRUE}
+df <- topGO(goana_loess, ontology = "MF", number = 15)
+df
+## we remove nr 7 and 8, because they are identical to 9 
+df <- df[-c(7, 8),]
+df$Term[7] <- "cation-transporting\nATPase activity"
+df$Term[9] <- "inorganic cation transmembrane\ntransporter activity"
+df$Term[11] <- "monovalent inorganic cation\ntransmembrane transporter activity"
+
+ggplot(df, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = TRUE)) + 
+  geom_point(shape = 21, alpha = 0.8)  +
+  theme_bw() +
+  theme(text = element_text(size = 20), 
+        aspect.ratio = 1, 
+        legend.position = "bottom", legend.direction="horizontal", 
+        legend.box = "horizontal", plot.title = element_text(hjust = 0.5))  +
+  geom_text_repel(aes(label=Term), size=4, data=df, color = "black", 
+                  point.padding = 0.3, box.padding = 0.2, xlim = c(9.5, NA)) +
+  scale_size(breaks=pretty_breaks(4), range = c(3, 13)) +
+  guides(size = guide_legend("log2(genes with GO term)", title.position = "top")) +
+  labs(x = "-log10(p-value)", y = "log2(target genes with GO term)") +
+  ggtitle("Molecular Function") +
+  scale_fill_manual(values = pal_locuszoom()(3)[3]) +
+  guides(fill = FALSE)
+  
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "ORA_circle_plot_MF_final.png"), width = 6, height = 7)
+```
+
+We also include a combined plot with the most important terms from all three ontologies
+
+```{r ORA-circle-plot-combined, cache = TRUE}
+df_comb <- rbind(topGO(goana_loess, ontology = "CC", number = 16)[-seq(5,14),], 
+                 topGO(goana_loess, ontology = "BP", number = 8)[-seq(3, 7),],
+                 topGO(goana_loess, ontology = "MF", number = 9)[-c(2, seq(4, 8)),])
+
+ggplot(df_comb, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = Ont)) + 
+  geom_point(shape = 21, alpha = 0.8)  +
+  theme_bw() +
+  theme(text = element_text(size = 20), 
+        aspect.ratio = 1, 
+        legend.position = "bottom", legend.direction="horizontal", 
+        legend.box = "horizontal")  +
+  geom_text_repel(aes(label=Term), size=5, data=df_comb, color = "black", 
+                  point.padding = 0.3, box.padding = 0.4, xlim = c(9.5, 39)) +
+  scale_size(breaks=pretty_breaks(4), range = c(3, 13)) +
+  guides(size = guide_legend("log2(genes with GO term)", title.position = "top"),
+         fill = guide_legend("Ontology", title.position = "top", 
+                             override.aes = list(size=5))) +
+  labs(x = "-log10(p-value)", y = "log2(target genes with GO term)") +
+  scale_fill_locuszoom()
+
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "ORA_circle_plot_combined_final.png"), width = 6.5, height = 7.5)
+```
+
+
+
+
+## KEGG pathway analysis
+
+We also check for enriched KEGG pathways:
+
+```{r kegga, cache = TRUE}
+## one-sided hypergeometric tests
+kegga_res<- kegga(de = unique(entrez_loess$entrezgene), species = "Mm",
+                   universe = sns_bg_entrez$entrezgene)
+## sort the pathways after raw p-value
+kegga_res <- kegga_res[order(kegga_res$P.DE, decreasing = FALSE),]
+topKEGG(kegga_res, number = 20)
+write.table(topKEGG(kegga_res, number = 100), 
+            file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_", pValue_cut, 
+                      "_kegga.txt")), sep = "\t", quote = FALSE)
+```
+
+
+# Max peak coverage vs. gene TPM
+
+We want to know the range of gene expression of our target genes. For this, we plot the maximal (average) peak coverage against the gene expression.
+
+```{r CLIP-coverage, cache = TRUE}
+if (file.exists(here("Rmd", "rds", "cov.rds"))) {
+  cov <- readRDS(here("Rmd", "rds", "cov.rds"))  
+} else{
+  ## read CLIP-seq BAM files to get genome coverage 
+  cov <- list()
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    ga <- readGAlignmentPairs(here("BAM_deduplicated", sample, 
+                                   paste0(sample, "_deduplicated.bam")))
+    cov[[sample]] <- coverage(ga)
+    rm(ga)
+    gc()
+    saveRDS(cov, here("Rmd", "rds", "cov.rds")) 
+  }
+}
+```
+
+
+```{r max-peak-coverage-all, cache = TRUE, dependson = c("CLIP-coverage", "read-salmon-counts")}
+df_peak_cov <- data.frame(gene_id = clipper[["SNS_70K"]]$gene_id,
+                 max_coverage = max(cov[["SNS_70K"]][clipper[["SNS_70K"]]]),
+                 mean_coverage = round(mean(cov[["SNS_70K"]][clipper[["SNS_70K"]]]), 
+                                       digits = 2),
+                 selected_peak = overlapsAny(clipper[["SNS_70K"]], loess_peaks, 
+                                        type = "equal"))
+
+## compute the mean cpms of the two RNA-seq samples per peak
+cpms <- cpm(dge0_sns) %>%
+  as.data.frame() 
+cpms <- cpms %>%
+  tibble::rownames_to_column("gene_id") %>%
+  mutate(mean_cpm = rowMeans(dplyr:: select(cpms, starts_with("WT_SNS")))) %>%
+  dplyr::select(-starts_with("WT_SNS")) 
+
+
+## merge the peak df with the tpms
+df_peak_cov <- df_peak_cov %>%
+  dplyr::left_join(., cpms, by = c("gene_id")) %>%
+    dplyr::filter(!is.na(mean_cpm))
+
+## add the gene names
+df_peak_cov$gene_name <- gtf$gene_name[match(df_peak_cov$gene_id, gtf$gene_id)]
+```
+
+
+```{r gene_expression_vs_peak_score_plotting-all, warning = FALSE, cache = 2}
+plot_peak_strength_cpm <- function(df, y_col = "max_coverage", 
+                                   log = FALSE, 
+                                   col = NULL, cutoff = 1e-05){
+  p <- ggplot(df[!df[,c(col)],], aes_string(x = "mean_cpm", y = y_col)) +
+    geom_point(alpha = 0.3, aes(color = "darkgrey")) +
+    # geom_density_2d(colour="black") + 
+    geom_point(data = df[df[,c(col)],], alpha = 0.3, aes(color = "brown3")) + 
+    theme_bw() +
+    theme(text = element_text(size = 20), aspect.ratio = 1) +
+    scale_color_manual(name = "p-value", 
+                       values = c("darkgrey" = "darkgrey", "brown3" = "brown3"), 
+                       labels = c("< 1e-05", "\u2265 1e-05")) + 
+    labs(color = "p-value") +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5)))
+  if (log) {
+    p <- p +
+      scale_x_continuous(trans='log10') + 
+      scale_y_continuous(trans="log10")
+  }
+  p
+}
+
+## We add a pseudocount of 0.01 so that all genes with mean cpm of 0 are still
+## included in the plot
+df_peak_cov <- df_peak_cov
+df_peak_cov$mean_cpm <- df_peak_cov$mean_cpm + 0.01
+
+plot_peak_strength_cpm(df_peak_cov, y_col = "max_coverage", log = TRUE, 
+                       col = "selected_peak", cutoff = pValue_cut)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "peak_max_coverage_vs_mean_cpm.png"), width = 6.5, height = 5)
+
+
+plot_peak_strength_cpm(df_peak_cov, y_col = "mean_coverage", log = TRUE, 
+                       col = "selected_peak", cutoff = pValue_cut)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "peak_mean_coverage_vs_mean_cpm.png"), width = 6.5, height = 5)
+```
+
+TOOO:
+- include points with cpm of 0 or Na? they get cut off at the left border
+- include density lines? so we can see where the majority of points is?
+
+Our target genes come from a broad range of gene expression levels and we did not only select for highly expressed genes.
+
+
+
+
+# Total cortex specific peaks
+
+We use the same approach to find the peaks that are specific for the total cortex sample (high read cound and low read count in SNS sample).
+
+## CLIP-seq read counts in total cortex CLIPper peaks
+
+
+We count the number of reads that overlap each of the SNS CLIPper peaks.
+```{r peak-read-count-total, cache = TRUE}
+if (file.exists(here("Rmd", "rds", "clipper_peaks_total_cortex_read_count.rds"))) {
+  counts <- readRDS(here("Rmd", "rds", "clipper_peaks_total_cortex_read_count.rds"))  
+} else{
+  total_ids <- paste(seqnames(clipper[["HOMO_70K"]]), start(clipper[["HOMO_70K"]]), 
+                     end(clipper[["HOMO_70K"]]), sep = "_")
+  
+  counts <- list()
+  for (sample in c("HOMO_70K", "SNS_70K")){
+    bf <- BamFile(here("BAM_deduplicated", sample, 
+                                   paste0(sample, "_deduplicated.bam")))
+    asMates(bf) <- TRUE
+    param <- ScanBamParam(which = clipper[["HOMO_70K"]])
+    counts[[sample]] <- countBam(bf, param = param)
+    counts[[sample]]$peak_id <- paste(counts[[sample]]$space, 
+                                      counts[[sample]]$start, 
+                                      counts[[sample]]$end, sep = "_")
+    ## order the counts according to initial peak ordering
+    m <- match(total_ids, counts[[sample]]$peak_id)
+    counts[[sample]] <- counts[[sample]][m,]
+  }
+}
+```
+
+```{r save-counts-rds-total, include = FALSE, eval = FALSE}
+saveRDS(counts, file = here("Rmd", "rds", "clipper_peaks_total_cortex_read_count.rds"))
+```
+
+
+##  LOESS fit 
+
+```{r save-dgelist-total, include = FALSE, eval = TRUE}
+if (!file.exists(here("Rmd", "rds", "peak_counts_total_cortex.rds"))){
+  cts_clip <- data.frame(SNS = counts[["HOMO_70K"]]$record, 
+                         homogenate = counts[["SNS_70K"]]$records)
+  
+  dge <- edgeR::DGEList(cts_clip, group = factor(colnames(cts_clip)))
+  dge <- edgeR::calcNormFactors(dge)
+  
+  saveRDS(dge, here("Rmd", "rds", "peak_counts_total_cortex.rds"))
+}
+```
+
+```{r loess-lib-size-corrected-total, cache = TRUE}
+dge <- readRDS(here("Rmd", "rds", "peak_counts_total_cortex.rds"))
+o <- 1
+lib.size <- with(dge$samples, lib.size*norm.factors)
+
+M <- log2((dge$counts[,1] + o) / (lib.size[1] + o)) - 
+  log2((dge$counts[,2] + o) / (lib.size[2] + o))
+A <- (log2(dge$counts[,1] + o) + log2(dge$counts[,2] + o)) / 2
+
+df_raw <- data.frame(M = M, A = A)
+# s <- sample(nrow(df_raw), size = 100000, replace = FALSE)
+
+fit <- loess(formula = M~A, data=df_raw, span=1/4, family="symmetric",
+             degree = 1, iterations = 4)
+
+## compute the predicted value for each A and 
+fitted_M <- predict(fit, newdata = data.frame(A = A))
+table(is.na(fitted_M))
+
+## Adjust the M value by the fit
+keep <- !is.na(fitted_M)
+table(keep)
+dge <- dge[keep,]
+fitted_M <- fitted_M[keep]
+M <- M[keep]
+A <- A[keep]
+adj_M <- M - fitted_M
+df_raw <- df_raw[keep,]
+
+# s <- sample(nrow(df_raw), 100000, replace = FALSE)
+```
+
+```{r raw-MA-plot-LOESS-total, dependson = "loess-lib-size-corrected-total", cache = TRUE}
+## Raw MA-plot
+ggplot(df_raw, aes(x = A, y = M)) +
+  geom_point(alpha = 0.2, color = "darkgrey") +
+  stat_density2d(aes(fill=..level.., alpha = ..level..), geom='polygon',
+                 colour='black') +
+  scale_fill_viridis() +
+  theme_bw() +
+  labs(x = "M", y = "A (total cortex/SNS)")
+
+## Raw MA-plot with the LOESS fit
+ggplot(df_raw, aes(x = A, y = M)) +
+  geom_point(alpha = 0.2, color = "darkgrey") +
+  stat_density2d(aes(fill=..level.., alpha = ..level..), geom='polygon',
+                 colour='black') +
+  scale_fill_viridis() +
+  theme_bw() + 
+  geom_line(aes(x = A, y = fitted(fit)), color = "red", linetype = 2) +
+  labs(x = "M", y = "A (total cortex/SNS)")
+```
+
+```{r adj-MA-plot-LOESS-total, dependson = "loess-lib-size-corrected-total", cache = TRUE}
+## LOESS adjustment
+data.frame(adjusted_M = adj_M, A = A) %>%
+ggplot(aes(x = A, y = adjusted_M)) +
+  geom_point(alpha = 0.2, color = "darkgrey") +
+  stat_density2d(aes(fill=..level.., alpha = ..level..), geom='polygon',
+                 colour='black') +
+  scale_fill_viridis() +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 0, color = "red", linetype = 2) +
+  labs(x = "M", y = "A (total cortex/SNS)")
+```
+
+
+## edgeR p-value for peak ranking
+
+```{r adjust-MA-edgeR-total, dependson = "loess-lib-size-corrected-total", cache = TRUE}
+# dge <- readRDS(here("Rmd", "rds", "peak_counts_total_cortex.rds"))
+dge2 <- dge
+
+## The M values are only shifted in the region with small A values. So we take
+## the peaks with M value between -2 and 2 for dispersion estimation.
+k <- M > -2 & M < 2
+
+## We only consider a subset of peaks for the dispersion estimation
+dge2$samples$group <- "common"
+dge2$samples$group <- factor(dge2$samples$group)
+
+dge2 <- estimateCommonDisp(dge2[k,])
+dge2$common.dispersion
+
+## Compute offset
+offsets <- matrix(getOffset(dge), 
+                  nrow=nrow(dge), ncol=2, byrow=TRUE)
+offsets[,2] <- offsets[,2] - fitted_M
+dge$offset <- offsets
+
+## Fit model
+mm <- model.matrix(~group, dge$samples)
+f <- glmFit(dge, mm, dispersion = dge2$common.dispersion)
+lrt <- glmLRT(f)
+```
+
+
+```{r MA-pValue-viridis-total, dependson = "adjust-MA-edgeR-total", cache = TRUE}
+## highlight p-value in plot 
+ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
+  geom_point() + 
+  geom_density_2d(colour="white") + 
+  theme_bw() +
+  scale_color_viridis() +
+  theme(text = element_text(size = 20), aspect.ratio = 1,
+        plot.title = element_text(hjust = 0.5)) +
+  labs(color = "-log10(p-value)") +
+  guides(color = guide_colourbar(barwidth = 1, barheight = 10)) +
+  ggtitle("total cortex")
+
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "MA_pValue_total_cortex.png"), width = 7, height = 5.5)
+```
+
+
+
+## Number of peaks and genes at different p-value cutoffs
+
+We order the peaks basesd on the p-values and pick the same number as SNS specific peaks.
+
+```{r}
+## number of SNS peaks and genes
+ps <- length(subs_sns[[2]])
+gs <- length(unique(subs_sns[[2]]$gene_id))
+
+## We order the peaks and exclude the peaks with logFC < 0.
+sel <- lrt[lrt$table$logFC > 0,]
+sel <- sel[order(sel$table$PValue, decreasing = FALSE),]
+sel <- sel[1:ps,]
+
+pValue_cut <- sel$table[nrow(sel), "PValue"]
+
+loess_peaks <- clipper[["HOMO_70K"]][lrt$table$PValue < pValue_cut & 
+                                       lrt$table$logFC > 0]
+## We have the same number of peaks, but different number of genes:
+length(unique(loess_peaks$gene_id))
+gs
+```
+
+
+```{r loess-p-value-different-cutoffs-total, dependson = "adjust-MA-edgeR-total", cache = TRUE}
+peaks_list_pValue <- GRangesList(
+  pVal_1em5 = clipper[["HOMO_70K"]][lrt$table$PValue < 0.00001 & lrt$table$logFC > 0],
+  pVal_5em5 = clipper[["HOMO_70K"]][lrt$table$PValue < 0.00005 & lrt$table$logFC > 0],
+  pVal_1em4 = clipper[["HOMO_70K"]][lrt$table$PValue < 0.0001 & lrt$table$logFC > 0],
+  pVal_5em4 = clipper[["HOMO_70K"]][lrt$table$PValue < 0.0005 & lrt$table$logFC > 0],
+  pVal_1em3 = clipper[["HOMO_70K"]][lrt$table$PValue < 0.001 & lrt$table$logFC > 0],
+  pVal_sns = clipper[["HOMO_70K"]][lrt$table$PValue < pValue_cut & lrt$table$logFC > 0],
+  pVal_5em3 = clipper[["HOMO_70K"]][lrt$table$PValue < 0.005 & lrt$table$logFC > 0],
+  all_peaks = clipper[["HOMO_70K"]])
+
+lapply(peaks_list_pValue, function(x) c(length(x), unique(x$gene_id) %>% length()))
+```
+
+
+```{r loess-p-value-different-cutoffs-barplot-total, dependson = "loess-p-value-different-cutoffs-total", cache = TRUE}
+peak_gene_region_barplot <- function(peaks, anno) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  print(df)
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text = element_text(size = 20),
+                axis.text.x = element_text(angle = 45, hjust = 1, 
+                                           face = c(rep("plain", 2), "bold", rep("plain", 5))),
+                legend.position = "bottom", legend.direction="horizontal", 
+                legend.box = "horizontal",
+                plot.title = element_text(hjust = 0.5))  +
+          ylab("% of peaks") +
+          labs(fill = "location") +
+          scale_x_discrete(breaks=c("all_peaks", "pVal_5em3", "pVal_sns",
+                              "pVal_1em3","pVal_5em4", "pVal_1em4", "pVal_5em5",
+                              "pVal_1em5"), 
+                           labels=c("no cutoff", "5e-3", 
+                                    as.character(format(pValue_cut, 
+                                                        scientific = TRUE, 
+                                                        digits = 1)), 
+                                    "1e-3", "5e-4", "1e-4", "5e-5", "1e-5"),
+                           limits = c("all_peaks", "pVal_5em3", "pVal_sns", 
+                              "pVal_1em3","pVal_5em4", "pVal_1em4", "pVal_5em5",
+                              "pVal_1em5"),
+                           name = "p-value cutoff") +
+           scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+                             values = c("exon" = "#9C3B8C", 
+                                        "five_prime_utr" = "#43BB5F",
+                                        "three_prime_utr" = "cyan4", 
+                                        "intron" = "#7BAFDE")) +
+          ggtitle("total cortex")
+  )
+}
+
+peak_gene_region_barplot(peaks_list_pValue, anno)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "pValue_cutoffs_barplot_total_cortex.png"), width = 5, height = 5)
+```
+
+
+Write a BED file with the location of the selected total cortex peaks.
+```{r export-cortex-BED}
+bed_file <- file.path(out_dir, "selected_peaks", 
+                      paste0("selected_peaks_total_cortex_pValue_", 
+                             format(pValue_cut, scientific = TRUE, digits = 1), 
+                             ".bed"))
+if(!file.exists(bed_file)) {
+  export(loess_peaks, bed_file)
+}
+```
+
+
+
+
+We compare the number of cortex peaks resulting from different p-value cutoffs to the number of selected SNS peaks. 
+
+```{r loess-p-value-cutoffs-target-genes-total, dependson = "loess-p-value-different-cutoffs-total", cache = TRUE}
+loess_peaks <- add_gene_annotation(loess_peaks, anno[["gene"]])
+
+loess_targets_total <- loess_peaks %>%
+    as.data.frame() %>%
+    dplyr::group_by(gene_id) %>%
+    dplyr::select(seqnames, gene_id, gene_name, gene_biotype) %>%
+    dplyr::mutate(nr_peaks = dplyr::n()) %>%
+    dplyr::arrange(desc(nr_peaks)) %>%
+    unique()
+head(loess_targets_total)
+
+write.table(loess_targets_total,
+            file = file.path(out_dir, paste0("top_peaks_total_cortex_loess_adjM_pValue_", 
+                                             pValue_cut, "_gene_anno.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+```
+
+We use a p-value cutoff of `r pValue_cut` for the total cortex peaks.
+
+# Comparison of selected SNS and total cortex target peaks
+
+We want to compare the location of our selected peaks from the SNS and total cortex sample. We expect to see that the total cortex has a strong enrichment of intronic peaks whereas the SNS peaks are mostly located in exons and 3' UTR regions.
+
+We show the location of all total cortex peaks, the location of the selected total cortex specific peaks (less binding in the SNS sample --> the nuclear targets???), the location of all SNS peaks and the selected SNS specific targets (less bindin in total cortex)
+
+```{r barplot-peak-location-comparison-SNS-total}
+peak_gene_region_barplot_subs <- function(peaks, anno) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text = element_text(size = 20), 
+                axis.text.x = element_text(angle = 45, hjust = 1),)  +
+          ylab("% of peaks") +
+          labs(fill = "location") +
+          scale_x_discrete(breaks=c("all_cortex", "all_SNS", "cortex", "SNS"),
+                           labels=c("all cortex", "all SNS", "selected cortex", "selected SNS"),
+                           limits = c("all_cortex", "all_SNS", "cortex", "SNS"),
+                           name = "peaks") +
+           scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+                             values = c("exon" = "#9C3B8C", 
+                                        "five_prime_utr" = "#43BB5F",
+                                        "three_prime_utr" = "cyan4", 
+                                        "intron" = "#7BAFDE"))
+  )
+}
+
+subs_total <- peaks_list_pValue[c("all_peaks", "pVal_sns")]
+subs <- c(subs_sns, subs_total)
+names(subs) <- c("all_SNS", "SNS", "all_cortex", "cortex")
+
+peak_gene_region_barplot_subs(subs, anno)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "pValue_single_cutoff_barplot_total.png"), width = 5, height = 5)
+```
+
+```{r}
+## Plot with only the selected peaks
+peak_gene_region_barplot_subs_selected <- function(peaks, anno) {
+  olap_len <- list()
+  for (sample in names(peaks)){
+    olap_len[[sample]] <- lapply(anno, function(x) 
+      length(suppressWarnings(subsetByOverlaps(peaks[[sample]], x, type = "any"))))
+    names(olap_len[[sample]]) <- names(anno)
+  } 
+
+  df <- as.data.frame( t( 
+    cbind( 
+      sapply(olap_len, as.data.frame)) 
+  ) )
+  
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text = element_text(size = 20), 
+                axis.text.x = element_text(angle = 45, hjust = 1))  +
+          ylab("% of peaks") +
+          labs(fill = "location") +
+          scale_x_discrete(breaks=c("cortex", "SNS"),
+                           labels=c("cortex", "SNS"),
+                           limits = c("cortex", "SNS"),
+                           name = "selected peaks") +
+           scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+                             values = c("exon" = "#9C3B8C", 
+                                        "five_prime_utr" = "#43BB5F",
+                                        "three_prime_utr" = "cyan4", 
+                                        "intron" = "#7BAFDE"))
+  )
+}
+
+subs <- GRangesList(SNS = subs_sns[["pVal_1em5"]], 
+                    cortex = peaks_list_pValue[["pVal_sns"]]) 
+
+peak_gene_region_barplot_subs_selected(subs, anno)
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "pValue_single_cutoff_barplot_selected_SNS_total.png"), width = 5, height = 5)
+```
+
+
+We decide on a p-value cutoff of `r pValue_cut` that gives us an identical number of peaks as for the SNS sample. 
+
+```{r MA-loess-p-value-cutoff-total, dependson = "loess-p-value-cutoffs-target-genes-total", cache = TRUE}
+ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0)) +
+  geom_point(alpha = 0.2) + 
+  geom_density_2d(colour="black") + 
+  theme_bw() +
+  labs(color = paste0("p-value < ", 
+                      format(pValue_cut, scientific = TRUE, digits = 1))) + 
+  theme(text = element_text(size = 20)) +
+  scale_color_manual(values = c("FALSE" = "darkgrey", "TRUE" = "brown3"), 
+                     labels = c(paste0("\u2265 ", format(pValue_cut, scientific = TRUE, digits = 1)), 
+                                paste0("< ", format(pValue_cut, scientific = TRUE, digits = 1)))) +
+  labs(color = "p-value") +
+  theme(aspect.ratio = 1) +
+  guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5)))
+ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
+            "MA_pValue_cutoff_total.png"), width = 6.4, height = 5)
+```
+
+# R session info
+```{r}
+sessionInfo()
+```
