@@ -37,12 +37,11 @@ library(scales)
 
 ```{r paths}
 source(here("R", "data_import.R"))
-
-# gtf_file <- "/Volumes/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
-
 gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
 out_dir <- here("analysis", "deduplicated", "MA_plot_selection")
 metadat <- read.table(here("metadata.txt"), header = TRUE)
+
+fig_dir <- "/home/kathi/FUS_paper/figures"
 ```
 
 ```{r anno-prep, cache = TRUE}
@@ -208,7 +207,7 @@ lrt <- glmLRT(f)
 
 ```{r MA-pValue-viridis, cache = TRUE}
 ## highlight p-value in plot 
-ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
+p <- ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
   geom_point() + 
   geom_density_2d(colour="white") + 
   theme_bw() +
@@ -218,9 +217,14 @@ ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
   labs(color = "-log10(p-value)") +
   guides(color = guide_colourbar(barwidth = 1, barheight = 10)) +
   ggtitle("cortical SNS")
+p
+ggsave(here("Rmd", "target_gene_selection_analysis_figures",
+            "MA_pValue.png"), p, width = 7, height = 5.5)
+```
 
-ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "MA_pValue.png"), width = 7, height = 5.5)
+```{r, dependson = "MA-pValue-viridis", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2", "MA_pValue_SNS.png"), plot = p, 
+       width = 7, height = 5.5, dpi = 500)
 ```
 
 
@@ -301,10 +305,18 @@ peak_gene_region_barplot <- function(peaks, anno) {
   )
 }
 
-peak_gene_region_barplot(peaks_list_pValue, anno)
+p <- peak_gene_region_barplot(peaks_list_pValue, anno)
+p
 ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "pValue_cutoffs_barplot.png"), width = 5, height = 5)
+            "pValue_cutoffs_barplot.png"), p, width = 5, height = 5)
 ```
+
+```{r, dependson = "loess-p-value-different-cutoffs-barplot", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_SNS.pdf"), 
+       plot = p, width = 5, height = 5)
+```
+
+
 
 ```{r loess-p-value-cutoffs-target-genes, cache = TRUE}
 pValue_cut <- 0.00001
@@ -393,7 +405,7 @@ ggsave(here("Rmd", "target_gene_selection_analysis_figures",
 We decide on the smallest test p-value of `r pValue_cut`, because it gives us the strongest enrichment of exonic and 3'UTR peaks and a depletion of intronic peaks (compared to all SNS CLIPper peaks).
 
 ```{r MA-loess-p-value-cutoff, dependson = "loess-p-value-different-cutoffs", cache = TRUE}
-ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0)) +
+p <- ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0)) +
   geom_point(alpha = 0.2) + 
   geom_density_2d(colour="black") + 
   theme_bw() +
@@ -404,11 +416,19 @@ ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0
   labs(color = "p-value") +
   theme(aspect.ratio = 1) +
   guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5)))
+p
 ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "MA_pValue_cutoff_brown3.png"), width = 6.4, height = 5)
+            "MA_pValue_cutoff_brown3.png"), p, width = 6.4, height = 5)
 
 ## other color posibility is "firebrick3"
 ```
+
+```{r, dependson = "MA-loess-p-value-cutoff", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2", "MA_pValue_cutoff_SNS.png"), plot = p, 
+       width = 6.4, height = 5, dpi = 500)
+```
+
+
 
 ## ORA
 
@@ -664,7 +684,7 @@ df_comb <- rbind(topGO(goana_loess, ontology = "CC", number = 16)[-seq(5,14),],
                  topGO(goana_loess, ontology = "BP", number = 8)[-seq(3, 7),],
                  topGO(goana_loess, ontology = "MF", number = 9)[-c(2, seq(4, 8)),])
 
-ggplot(df_comb, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = Ont)) + 
+p <- ggplot(df_comb, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = Ont)) + 
   geom_point(shape = 21, alpha = 0.8)  +
   theme_bw() +
   theme(text = element_text(size = 20), 
@@ -679,11 +699,15 @@ ggplot(df_comb, aes(x = -log10(P.DE), y = log2(DE), size = log2(N), fill = Ont))
                              override.aes = list(size=5))) +
   labs(x = "-log10(p-value)", y = "log2(target genes with GO term)") +
   scale_fill_locuszoom()
-
+p
 ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "ORA_circle_plot_combined_final.png"), width = 6.5, height = 7.5)
+            "ORA_circle_plot_combined_final.png"), p, width = 6.5, height = 7.5)
 ```
 
+```{r, dependson = "ORA-circle-plot-combined", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2_supp", "ORA_circle_plot_combined_SNS.pdf"), 
+       plot = p, width = 6.5, height = 7.5)
+```
 
 
 
@@ -952,7 +976,7 @@ lrt <- glmLRT(f)
 
 ```{r MA-pValue-viridis-total, dependson = "adjust-MA-edgeR-total", cache = TRUE}
 ## highlight p-value in plot 
-ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
+p <- ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
   geom_point() + 
   geom_density_2d(colour="white") + 
   theme_bw() +
@@ -962,9 +986,14 @@ ggplot(lrt$table, aes(x=logCPM, y=logFC, colour=-log10(PValue))) +
   labs(color = "-log10(p-value)") +
   guides(color = guide_colourbar(barwidth = 1, barheight = 10)) +
   ggtitle("total cortex")
-
+p
 ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "MA_pValue_total_cortex.png"), width = 7, height = 5.5)
+            "MA_pValue_total_cortex.png"), p, width = 7, height = 5.5)
+```
+
+```{r, dependson = "MA-pValue-viridis-total", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2_supp", "MA_pValue_sns.png"), plot = p, 
+       width = 7, height = 5.5, dpi = 500)
 ```
 
 
@@ -1068,9 +1097,15 @@ peak_gene_region_barplot <- function(peaks, anno) {
   )
 }
 
-peak_gene_region_barplot(peaks_list_pValue, anno)
+p <- peak_gene_region_barplot(peaks_list_pValue, anno)
+p
 ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "pValue_cutoffs_barplot_total_cortex.png"), width = 5, height = 5)
+            "pValue_cutoffs_barplot_total_cortex.png"), p, width = 5, height = 5)
+```
+
+```{r, dependson = "loess-p-value-different-cutoffs-barplot-total", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_total.pdf"), 
+       plot = p, width = 5, height = 5)
 ```
 
 
@@ -1232,7 +1267,7 @@ ggsave(here("Rmd", "target_gene_selection_analysis_figures",
 We decide on a p-value cutoff of `r pValue_cut` that gives us an identical number of peaks as for the SNS sample. 
 
 ```{r MA-loess-p-value-cutoff-total, dependson = "loess-p-value-cutoffs-target-genes-total", cache = TRUE}
-ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0)) +
+p <- ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0)) +
   geom_point(alpha = 0.2) + 
   geom_density_2d(colour="black") + 
   theme_bw() +
@@ -1245,9 +1280,17 @@ ggplot(lrt$table, aes(x=logCPM, y=logFC, color = PValue < pValue_cut & logFC > 0
   labs(color = "p-value") +
   theme(aspect.ratio = 1) +
   guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5)))
+p
 ggsave(here("Rmd", "target_gene_selection_analysis_figures", 
-            "MA_pValue_cutoff_total.png"), width = 6.4, height = 5)
+            "MA_pValue_cutoff_total.png"), p, width = 6.4, height = 5)
 ```
+
+```{r, dependson = "MA-loess-p-value-cutoff-total", cache = TRUE}
+ggsave(file.path(fig_dir, "fig2_supp", "MA_pValue_cutoff_total.png"), plot = p, 
+       width = 6.4, height = 5, dpi = 500)
+```
+
+
 
 # R session info
 ```{r}
