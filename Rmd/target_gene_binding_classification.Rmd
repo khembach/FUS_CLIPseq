@@ -265,6 +265,11 @@ df %>% dplyr::select(df, nr_peaks, gene_cluster, exon_cluster, three_utr_cluster
 
 
 
+# R session info
+```{r}
+sessionInfo()
+```
+
 
 
  
