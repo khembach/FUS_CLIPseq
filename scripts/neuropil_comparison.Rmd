@@ -1,0 +1,203 @@
+---
+title: "Comparison of SNS RNA-seq with neuropil RNA-seq"
+author: "Katharina Hembach"
+date: "3/22/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r paths}
+base_dir <- "/Volumes/Shared/data/seq/sonu_CLIPseq/clip_March2018/"
+outdir <- "/Volumes/Shared/data/seq/sonu_CLIPseq/clip_March2018/analysis/neuropil/"
+
+# GTF <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+gtf_file <- "/Users/katharina/PhD/data/annotation/Mouse/Mus_musculus.GRCm38.90.gtf"
+```
+
+## Neuropil RNA-seq
+
+In the paper "The Local Transcriptome in the Synaptic Neuropil Revealed by Deep Sequencing" from Cajigas et al. (2012), rat neuropils form the hippocampuse were sequenced with 454 sequencing (polyA, 1 million reads in total). They found a total of 8,379 transcripts (I think it is actually the number of genes). Because they were interested in the axon/dendrite specific RNAs and the neuropil also contains other types of cells, they created a list of genes that are enriched in glial cells, the nucleus and mitochondria, endothelial cells and interneurons (5829 transcripts). This list was subtracted from the expressed transcripts in the neuropil and 2550 transcripts were left, constituting the ason/denderite specific transcripts.
+
+## Comparison with SNS RNA-seq 
+
+We are interested to know how many of the neuropil specific transcripts we also observe in our SNS RNA-seq. We expect that most of the transcripts should be found in SNS as well.
+
+I copied the list of 2550 genes from the excel sheet to a text file so that we can read it into R.
+
+```{r neuropil_list}
+np <- read.table(file.path(base_dir, "neuropil", 
+                           "neuropil_specific_2550_genes.txt"), 
+                 sep="", header = TRUE, stringsAsFactors = FALSE)
+```
+
+We have to convert the rat gene annotations the mouse gene annotations. For this, we use the R interface to biomart.
+
+```{r conversion_mouse}
+## We convert rat Entrez IDs to mouse Ensembl IDs
+suppressMessages(library(biomaRt))
+
+ensembl <- useMart("ensembl")
+ensembl <- useDataset("rnorvegicus_gene_ensembl", mart=ensembl)
+# attributes <- listAttributes(ensembl)
+rat_entrezID <- np$Entrez_ID
+res <- getBM(attributes = c("ensembl_gene_id","entrezgene", "external_gene_name"), 
+                       values = rat_entrezID, mart = ensembl )
+## we only keep the genes from our initial list
+res <- res[res$entrezgene %in% rat_entrezID, ]
+dim(res)
+ 
+## we merge the table with our initial table
+# np_ensembl <- merge(np, res, by.x = "Entrez_ID", by.y = "entrezgene")
+
+## Convert the rat Ensembl IDs to mouse Ensembl IDs
+rat <-  useMart("ensembl", dataset = "rnorvegicus_gene_ensembl")
+mouse <-  useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+
+# homology mapping to mouse (retrieving Ensembl IDs)
+mapping <- getLDS(attributes = c("ensembl_gene_id"), filters = "ensembl_gene_id", 
+                  values = res$ensembl_gene_id, mart = rat, attributesL = c("ensembl_gene_id", "external_gene_name"), 
+                  martL = mouse, uniqueRows=FALSE)
+mouse_list <- mapping[, 2]
+```
+
+
+We read the Salmon transcript quantifications with tximport to get gene level counts and compute logCPMs
+
+```{r salmon}
+suppressMessages(library(rtracklayer))
+suppressMessages(library(tximport))
+suppressMessages(library(edgeR))
+
+##identifying Salmon quantification files
+dir <- "/Users/katharina/PhD/sonu_CLIPseq/RNAseq_Feb2017/Salmon"
+samples <- list.files(dir, pattern = "20170214.*")
+files <- file.path(dir, samples, "quant.sf")
+sampleNr <- as.factor(unlist(lapply(strsplit(samples, split="_" ), function(x) x[3]) ))
+
+samples <- unlist(lapply(strsplit(samples, split="\\."), function(x) x[2]) )
+samples <- unlist(lapply(strsplit(samples, split="-"), function(x) x[2]) )
+samples <- unlist(lapply(strsplit(samples, split="_R1"), function(x) x[1]) )
+names(files) <-  samples
+grp <- as.factor(unlist(lapply(strsplit(samples, split="_" ), function(x) paste(x[1], x[2], sep="_")) ) )
+
+gtf <- import(gtf_file)
+tx2gene<- unique(mcols(gtf)[c("transcript_id", "gene_id")])
+tx2gene <- tx2gene[!is.na(tx2gene$transcript_id),]
+tx2gene <- tx2gene[order(tx2gene$transcript_id),]
+## gene level counts
+txi <- tximport(files, type="salmon", txIn=TRUE, tx2gene = tx2gene, txOut=FALSE, countsFromAbundance = "no")  
+
+counts <- round(txi$counts)
+cts <- counts[rowSums(is.na(counts))==0,]
+## add average transcript lengths as offset
+normMat <- txi$length[match(rownames(cts), rownames(txi$length)),
+                              match(colnames(cts), colnames(txi$length))]
+normMat <- normMat/exp(rowMeans(log(normMat)))
+o <- log(calcNormFactors(cts/normMat)) + log(colSums(cts/normMat))
+## Create DGEList object and add offsets
+dge0 <- edgeR::DGEList(cts)
+dge0 <- edgeR::scaleOffset(dge0, offset = t(t(log(normMat)) + o))
+dge0 <- edgeR::calcNormFactors(dge0)
+
+## log cpms
+dge0$logcpm <- edgeR::cpm(dge0, log = TRUE, prior.count = 2) ## log2 values
+```
+
+We compare the list of axon/dendrite specific genes with the expressed genes in the WT_SNS RNA-seq (logcpm > 0, cpm >1).
+
+```{r expressed_SNS}
+suppressMessages(library(ggplot2))
+suppressMessages(library(ggforce))
+suppressMessages(library(lattice))
+suppressMessages(library(stringr))
+
+dge0_sns <- dge0[, grp == "WT_SNS"]
+dge0_sns$logcpm <- dge0_sns$logcpm[, grp == "WT_SNS"]
+
+mean_logcpm <- rowMeans(dge0_sns$logcpm)
+## keep the genes with mean logcpm >0
+mean_logcpm <- mean_logcpm[mean_logcpm > 0]
+
+## Get gene name for each Ensembl ID
+res_tab <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "description"), 
+                       values = names(mean_logcpm), mart = mouse )
+
+res_tab$description <- str_split(res_tab$description, 
+                                 pattern = " \\[Source", simplify = TRUE)[ ,1]
+
+m <- match(names(mean_logcpm), res_tab$ensembl_gene_id)
+
+df <- data.frame(logcpm = mean_logcpm, 
+                 neuropil = names(mean_logcpm) %in% mouse_list, 
+                 gene_name = res_tab[m, "external_gene_name"],
+                 gene_description = res_tab[m, "description"])
+
+## Number of axon/dendrite specific genes in SNS:
+length(mouse_list)
+table(df$neuropil)
+## percentage of neuropil genes in SNS
+table(df$neuropil)[2] / length(mouse_list) * 100
+
+
+### plot the logCPM of all genes(except neuropil) and only the neuropil genes
+p <- ggplot(df, aes(y = logcpm, x = neuropil)) + 
+  geom_sina(stat = "sina") 
+p
+
+p <- ggplot(df, aes(y = logcpm, x = neuropil)) + 
+  geom_violin() +
+  geom_boxplot()
+p
+
+
+p <- ggplot(df, aes(x = logcpm)) +
+  geom_density(aes(fill=neuropil), alpha=0.6) 
+p
+
+
+## Quantil-Quantile plot
+qq(neuropil ~ logcpm, data = df)
+
+### Number of neuropil genes in SNS with increasing mean logcpm cutoff
+cutoffs <- seq(0, 16)
+nr_neuropil <- sapply(cutoffs, function(x) sum(df[df$logcpm > x, "neuropil"]))
+nr_not_neuropil <- sapply(cutoffs, function(x) sum(!df[df$logcpm > x, "neuropil"]))
+
+df_cut <- data.frame(min_logcpm = rep(cutoffs, 2), 
+                     number_of_genes = c(nr_neuropil, nr_not_neuropil), 
+                     neuropil = c(rep("TRUE", length(cutoffs)), 
+                                  rep("FALSE", length(cutoffs))))
+
+p <- ggplot(df_cut, aes(x = min_logcpm, y = number_of_genes, fill = neuropil)) + 
+   geom_bar(stat = "identity", position = "dodge")
+p   
+
+
+## plot the percentage of genes that have a logcpm > cutoff
+df_perc <- data.frame(min_logcpm = rep(cutoffs, 2), 
+                      percentage_of_genes = c(nr_neuropil/nr_neuropil[1]*100, 
+                                          nr_not_neuropil/nr_not_neuropil[1]*100), 
+                      neuropil = c(rep("TRUE", length(cutoffs)), 
+                                   rep("FALSE", length(cutoffs))))
+p <- ggplot(df_perc, aes(x = min_logcpm, y = percentage_of_genes, fill = neuropil)) + 
+   geom_bar(stat = "identity", position = "dodge")
+p 
+
+```
+
+The group of neuropil genes has higher log cpm values than all other genes.
+
+Which neuropil genes have high loc cpm?
+```{r top_neuropil}
+head(df[order(df$logcpm, decreasing = TRUE), ], n = 20)
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
