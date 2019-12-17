@@ -31,3 +31,6 @@ circRNA/
 circRNA_FUS_CLIP/
 .here
 clip_March2018.Rproj
+scripts/clip_counts_mark.R
+Rmd/mark_play.R
+Rmd/rds/
