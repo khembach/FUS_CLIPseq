@@ -22,7 +22,7 @@ rule all:
 		# expand("FastQC/{sample}_trimmed_fastqc.zip", sample = samples.ID.values.tolist()),
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
 		# expand("STAR/{sample}/{sample}_Aligned.sortedByCoord.out.bam.bai", sample = samples.ID.values.tolist()),
-		# "MultiQC/multiqc_report.html",
+		"MultiQC/multiqc_report.html"
 		# expand("omniCLIP/{sample}/pred.bed", sample = samples.ID.values.tolist())
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "SNS_70K", group="SNS"),
 		# expand("omniCLIP/{sample}/{sample}_bg_{group}_pred.bed", sample = "HOMO_70K", group="Brain")
@@ -37,7 +37,8 @@ rule all:
 		# expand("omniCLIP/{sample}_ribo0/{sample}_bg_{group}_ribo0_pred.bed", sample = "SNS_70K", group="SNS_ribo0"),
 		# expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "SNS_70K", group="SNS"),
 		# expand("omniCLIP/{sample}_scoreFix/{sample}_bg_{group}_scoreFix_pred.bed", sample = "HOMO_70K", group="Brain"),
-		"dCLIP/dCLIP_summary.bed"
+		# "dCLIP/dCLIP_summary.bed",
+		# expand("FastQC/{sample}_Unmapped.out.mate2_fastqc.zip", sample = ["SNS_70K", "HOMO_70K"])
 
 
 
@@ -110,6 +111,25 @@ rule fastqc2:
 	shell:
 		"echo 'FastQC version:\n' > {log}; fastqc --version >> {log}; "
 		"fastqc -o FastQC -t {threads} {input.fastq}"
+
+##  FastQC, unmapped reads
+rule fastqc3:
+	input:
+		fastq1 = "STAR/{sample}/{sample}_Unmapped.out.mate1",
+		fastq2 = "STAR/{sample}/{sample}_Unmapped.out.mate2"
+	output:
+		"FastQC/{sample}_Unmapped.out.mate1_fastqc.zip",
+		"FastQC/{sample}_Unmapped.out.mate2_fastqc.zip"
+	log:
+		"logs/fastqc_{sample}.log"
+	threads:
+		config["ncores"]
+	shell:
+		"echo 'FastQC version:\n' > {log}; fastqc --version >> {log}; "
+		"fastqc -o FastQC -f fastq -t {threads} {input.fastq1}; "
+		"fastqc -o FastQC -f fastq -t {threads} {input.fastq2}"
+
+
 
 ## MultiQC
 rule multiqc:
@@ -220,7 +240,6 @@ rule staridx:
 	shell:
 		"echo 'samtools version:\n' > {log}; samtools --version >> {log}; "
 		"samtools index {input.bam}"
-
 
 
 rule extract_forward_read_bam:

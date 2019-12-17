@@ -1,0 +1,431 @@
+---
+title: "Analysis of unmapped reads"
+author: "Katharina Hembach"
+date: "8/19/2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(here)
+library(GenomicAlignments)
+library(ggplot2)
+library(Biostrings)
+library(tidyr)
+library(ShortRead)
+library(dplyr)
+```
+
+# Mapped deduplicated reads
+## Compute some statistics
+
+We want to know why so many reads in the SNS sample could not be mapped (~34% in SNS vs. 9% in total brain).
+
+```{r stats-function-definition}
+bam_stats <- function(sample){
+  ###########
+  ## read the BAM files
+  ###########
+  ga <- readGAlignmentPairs(here("BAM_deduplicated", sample, 
+                                 paste0(sample, "_deduplicated.bam")),
+                            param = ScanBamParam(what="seq"))
+  
+  #########
+  ## length distributions 
+  #########
+  ## qwidth includes the soft clipped nucleotides
+  res <- data.frame(fragment_length = width(ranges(ga)), 
+       length_read1 = qwidth(GenomicAlignments::first(ga)),
+       length_read2 = qwidth(GenomicAlignments::second(ga)))
+  
+  ########
+  ## overlapping nts of read pair
+  ########
+  ##  read1 length + read2 length - fragment length = distance between read1 and 
+  ## read2
+  ## positive --> the reads overlap
+  ## this is ignoring soft-clipped nucleotides
+  res$pair_overlap <- width(GenomicAlignments::first(ga)) + 
+    width(GenomicAlignments::second(ga)) - res$fragment_length
+    
+  #########
+  ## nucleotide compostion
+  #########
+  ## A, G, T, C content in each read pair
+  
+  ## http://bioconductor.org/packages/release/bioc/vignettes/GenomicAlignments/inst/doc/WorkingWithAlignedNucleotides.pdf
+  ## Because the BAM format imposes that the read sequence is “reverse complemented”
+  ## when a read aligns to the minus strand, we need to “reverse complement” it 
+  ## again to restore the original query sequences (i.e. the sequences before 
+  ## alignment, that is, as they can be seen in the FASTQ file)
+  
+  original_seq1 <- mcols(GenomicAlignments::first(ga))$seq
+  is_on_minus <- as.logical(strand(GenomicAlignments::first(ga)) == "-")
+  original_seq1[is_on_minus] <- reverseComplement(original_seq1[is_on_minus])
+
+  original_seq2 <- mcols(GenomicAlignments::second(ga))$seq
+  is_on_minus <- as.logical(strand(GenomicAlignments::second(ga)) == "-")
+  original_seq2[is_on_minus] <- reverseComplement(original_seq2[is_on_minus])
+  
+  lf_seq1 <- letterFrequency(original_seq1, letters = c("A", "T", "G", "C"), 
+                             as.prob = TRUE, collapse=TRUE)
+  lf_seq2 <- letterFrequency(original_seq2, letters = c("A", "T", "G", "C"), 
+                             as.prob = TRUE, collapse=TRUE)
+  res_letter <- res_letter <- as.data.frame(t(cbind(lf_seq1, lf_seq2)), 
+                                            row.names = FALSE)
+  res_letter$sample <- paste0(sample, c("|first", "|second"))
+   
+  #########
+  ## Di- and oligonucleotide frequency
+  #########
+  
+  df_seq1 <- dinucleotideFrequency(original_seq1, simplify.as="collapsed", 
+                                  as.prob = TRUE)
+  df_seq2 <- dinucleotideFrequency(original_seq2, simplify.as="collapsed", 
+                                  as.prob = TRUE)
+  res_dinuc <- as.data.frame(t(cbind(df_seq1, df_seq2)), 
+                            row.names = FALSE)
+  res_dinuc$sample <- paste0(sample, c("|first", "|second"))
+
+  ### tetramers
+  of_seq1 <- oligonucleotideFrequency(original_seq1, width = 4, step = 2,
+                                      simplify.as = "collapsed", as.prob = TRUE)
+  of_seq2 <- oligonucleotideFrequency(original_seq2, width = 4, step = 2,
+                                      simplify.as = "collapsed", as.prob = TRUE)
+  
+  res_tetra <- as.data.frame(t(cbind(of_seq1, of_seq2)), 
+                             row.names = FALSE)
+  res_tetra$sample <- paste0(sample, c("|first", "|second"))
+  
+
+  list(length = res, letters = res_letter, dinuc = res_dinuc, tetra = res_tetra)
+}
+```
+
+Compute the BAM stats for the SNS and total brain sample
+
+```{r compute-stats-mapped, cache = TRUE}
+df_length <- data.frame()
+df_letters <- data.frame()
+df_dinuc <- data.frame()
+df_tetra <- data.frame()
+
+for (sample in c("SNS_70K", "HOMO_70K")){
+  print(sample)
+  res <- bam_stats(sample)
+  res[["length"]]$sample <- rep(sample, nrow(res[["length"]]))
+
+  df_length <- rbind(df_length, res[["length"]])
+  df_letters <- rbind(df_letters, res[["letters"]])
+  df_dinuc <- rbind(df_dinuc, res[["dinuc"]])
+  df_tetra <- rbind(df_tetra, res[["tetra"]])
+}
+
+## from long to wide format
+df_letters <- df_letters %>% 
+  gather(key = "letter", value = "percentage", -sample) %>%
+  separate(sample, c("sample", "read"), sep = "\\|")
+
+df_dinuc <- df_dinuc %>% 
+  gather(key = "dinucleotide", value = "percentage", -sample) %>%
+  separate(sample, c("sample", "read"), sep = "\\|")
+
+df_tetra_mapped <- df_tetra %>% 
+  gather(key = "tetranucleotide", value = "perc_mapped", -sample) %>%
+  separate(sample, c("sample", "read"), sep = "\\|")
+```
+
+
+
+## Plotting
+
+```{r plotting-mapped, cache = 2}
+p <- ggplot(df_length, aes(x = fragment_length, fill = sample, 
+                           color = sample, stat(density))) +
+  geom_freqpoly(binwidth=1) +
+  scale_x_continuous(limits = c(0, 400)) +
+  theme_bw()+
+  ggtitle("mapped reads")
+p
+
+p <- ggplot(df_length, aes(x = length_read1, fill = sample, 
+                           color = sample, stat(density))) +
+  geom_freqpoly(binwidth=1) +
+  scale_x_continuous(limits = c(20, 76)) +
+  theme_bw()+
+  ggtitle("mapped reads")
+p
+
+p <- ggplot(df_length, aes(x = length_read2, fill = sample, 
+                           color = sample, stat(density))) +
+  geom_freqpoly(binwidth=1) +
+  scale_x_continuous(limits = c(20, 76)) +
+  theme_bw()+
+  ggtitle("mapped reads")
+p
+
+### overlapping nts of read pair
+p <- ggplot(df_length, aes(x = pair_overlap, fill = sample, 
+                           color = sample, stat(density))) +
+  geom_freqpoly(binwidth=1) +
+  scale_x_continuous(limits = c(-76, 76)) +
+  theme_bw()+
+  ggtitle("mapped reads")
+p
+
+## alphabet letter frequency
+p <- ggplot(df_letters, aes(x = letter, y = percentage, 
+                            fill = sample, color = read)) +
+  geom_col(position = position_dodge2( preserve = "total", padding=0.1), 
+           size=0.8) +
+  theme_bw() +
+  scale_color_manual(values=c("grey20", "gold"))+
+  ggtitle("mapped reads")
+p
+
+## dinucleotide frequency
+p <- ggplot(df_dinuc, aes(x = dinucleotide, y = percentage, 
+                          fill = paste0(sample, " ", read))) +
+  geom_col(position = position_dodge2( preserve = "total", padding=0.1), 
+           size=0.8) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  coord_flip() +
+  theme(strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14)) +
+  ggtitle("mapped reads") +
+  scale_fill_manual(values=c("#117733", "#44AA99", "#A4326B", "#CC6677"), 
+                    labels = c("total-read1", "total-read2", 
+                               "SNS-read1", "SNS-read2"),
+                    name = "Sample-reads")
+p
+ggsave(here("Rmd", "unmapped_reads_analysis_figures",
+            "bam_deduplicated_dinucleotide_frequency.pdf"),
+       p, width=7, height =10)
+
+## tetranucleotide frequency
+p <- ggplot(df_tetra_mapped, aes(x = tetranucleotide, y = perc_mapped, 
+                          fill = paste0(sample, " ", read))) +
+    geom_col(position = position_dodge2( preserve = "total", padding=0.1), 
+           size=0.8) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  coord_flip() +
+  theme(strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14)) +
+  ggtitle("mapped reads") +
+  ylab("percentage") +
+  scale_fill_manual(values=c("#117733", "#44AA99", "#A4326B", "#CC6677"), 
+                    labels = c("total-read1", "total-read2",
+                               "SNS-read1", "SNS-read2"),
+                    name = "Sample-reads")
+p
+ggsave(here("Rmd", "unmapped_reads_analysis_figures",
+            "bam_deduplicated_tetranucleotide_frequency.pdf"),
+       p, width=7, height = 30)
+```
+
+
+# Unmapped reads
+
+```{r}
+fastq_stats <- function(sample){
+  ###########
+  ## read the fastq files
+  ###########
+  fq1 <- readFastq(here("STAR", sample, paste0(sample, "_Unmapped.out.mate1")))
+  fq2 <- readFastq(here("STAR", sample, paste0(sample, "_Unmapped.out.mate2")))
+  
+  nreads1 <- length(fq1)
+  nreads2 <- length(fq2)
+  ### remove identical read duplicates
+  dup1 <- srduplicated(sread(fq1))
+  dup2 <- srduplicated(sread(fq2))
+  ## we only remove the read pairs that have duplicate first and second reads
+  dup_pair <- dup1 & dup2 
+  fq1 <- fq1[!dup_pair]
+  fq2 <- fq2[!dup_pair]
+  
+  message("Duplicate reads: ")
+  message((1-(length(fq1) + length(fq2))/(nreads1 + nreads2)) * 100)
+  
+  #########
+  ## length distributions 
+  #########
+  res <- data.frame(length_read1 = width(fq1),
+                    length_read2 = width(fq2))
+ 
+  #######
+  ## nucleotide compostion
+  #######
+  ## A, G, T, C content in each read pair
+  lf_seq1 <- letterFrequency(sread(fq1), letters = c("A", "T", "G", "C"), 
+                             as.prob = TRUE, collapse=TRUE)
+  lf_seq2 <- letterFrequency(sread(fq2), letters = c("A", "T", "G", "C"), 
+                             as.prob = TRUE, collapse=TRUE)
+  res_letter <- res_letter <- as.data.frame(t(cbind(lf_seq1, lf_seq2)), 
+                                            row.names = FALSE)
+  res_letter$sample <- paste0(sample, c("|first", "|second"))
+  
+  #########
+  ## Di- and oligonucleotide frequency
+  #########
+  df_seq1 <- dinucleotideFrequency(sread(fq1), simplify.as="collapsed", 
+                                   as.prob = TRUE)
+  df_seq2 <- dinucleotideFrequency(sread(fq2), simplify.as="collapsed", 
+                                   as.prob = TRUE)
+  res_dinuc <- as.data.frame(t(cbind(df_seq1, df_seq2)), 
+                             row.names = FALSE)
+  res_dinuc$sample <- paste0(sample, c("|first", "|second"))
+  
+  ### tetramers
+  of_seq1 <- oligonucleotideFrequency(sread(fq1), width = 4, step = 2,
+                                      simplify.as = "collapsed", as.prob = TRUE)
+  of_seq2 <- oligonucleotideFrequency(sread(fq2), width = 4, step = 2,
+                                      simplify.as = "collapsed", as.prob = TRUE)
+  
+  res_tetra <- as.data.frame(t(cbind(of_seq1, of_seq2)), 
+                             row.names = FALSE)
+  res_tetra$sample <- paste0(sample, c("|first", "|second"))
+  
+  list(length = res, letters = res_letter, dinuc = res_dinuc, tetra = res_tetra)
+}
+```
+
+We compute the stats for the unmapped reads.
+
+```{r compute-stats-unmapped, cache = TRUE}
+df_length <- data.frame()
+df_letters <- data.frame()
+df_dinuc <- data.frame()
+df_tetra <- data.frame()
+
+for (sample in c("SNS_70K", "HOMO_70K")){
+  print(sample)
+  res <- fastq_stats(sample)
+  res[["length"]]$sample <- rep(sample, nrow(res[["length"]]))
+  
+  df_length <- rbind(df_length, res[["length"]])
+  df_letters <- rbind(df_letters, res[["letters"]])
+  df_dinuc <- rbind(df_dinuc, res[["dinuc"]])
+  df_tetra <- rbind(df_tetra, res[["tetra"]])
+}
+
+## from long to wide format
+df_letters <- df_letters %>% 
+  gather(key = "letter", value = "percentage", -sample) %>%
+  separate(sample, c("sample", "read"), sep = "\\|")
+
+df_dinuc <- df_dinuc %>% 
+  gather(key = "dinucleotide", value = "percentage", -sample) %>%
+  separate(sample, c("sample", "read"), sep = "\\|")
+
+df_tetra_unmapped <- df_tetra %>% 
+  gather(key = "tetranucleotide", value = "perc_unmapped", -sample) %>%
+  separate(sample, c("sample", "read"), sep = "\\|")
+
+```
+
+## Plotting
+
+```{r  plotting-unmapped, cache = 2}
+p <- ggplot(df_length, aes(x = length_read1, fill = sample, 
+                           color = sample, stat(density))) +
+  geom_freqpoly(binwidth=1) +
+  scale_x_continuous(limits = c(20, 76)) +
+  theme_bw()+
+  ggtitle("unmapped reads")
+p
+
+p <- ggplot(df_length, aes(x = length_read2, fill = sample, 
+                           color = sample, stat(density))) +
+  geom_freqpoly(binwidth=1) +
+  scale_x_continuous(limits = c(20, 76)) +
+  theme_bw()+
+  ggtitle("unmapped reads")
+p
+
+
+## alphabet letter frequency
+p <- ggplot(df_letters, aes(x = letter, y = percentage, 
+                            fill = sample, color = read)) +
+  # geom_bar(position = "dodge", stat = "identity") +
+  geom_col(position = position_dodge2( preserve = "total", padding=0.1), 
+           size=0.8) +
+  theme_bw() +
+  scale_color_manual(values=c("grey20", "gold")) +
+  ggtitle("unmapped reads")
+p
+
+
+## dinucleotide frequency
+p <- ggplot(df_dinuc, aes(x = dinucleotide, y = percentage, 
+                          fill = paste0(sample, " ", read))) +
+  geom_col(position = position_dodge2( preserve = "total", padding=0.1), 
+           size=0.8) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  coord_flip() +
+  theme(strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14)) +
+  ggtitle("unmapped reads") +
+  scale_fill_manual(values=c("#117733", "#44AA99", "#A4326B", "#CC6677"), 
+                    labels = c("total-read1", "total-read2", 
+                               "SNS-read1", "SNS-read2"),
+                    name = "Sample-reads")
+p
+ggsave(here("Rmd", "unmapped_reads_analysis_figures",
+            "unmapped_dinucleotide_frequency.pdf"),
+       p, width=7, height =10)
+
+#### tetranucleotides
+## compute log2 fold-change between mapped and unmapped reads
+## positive: increase of the tetranucleotide in the unmapped reads
+## negative: decrease of the tetranucleotide in the unmapped reads
+df_tetra <- dplyr::full_join(df_tetra_mapped, df_tetra_unmapped, 
+                             by = c("sample", "read", "tetranucleotide"))
+df_tetra <- df_tetra %>%
+  mutate(log2FC = log2(perc_unmapped / perc_mapped))
+
+p <- ggplot(df_tetra[df_tetra$read == "first",], 
+            aes(x = tetranucleotide, y = log2FC, fill = sample)) +
+  geom_col(position = "dodge", size=0.8) +
+  theme_bw() +
+  theme(axis.text.y = element_text(family = "Courier")) + 
+  coord_flip() +
+  theme(strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14)) +
+  ggtitle("log2 FC of 4-mers in unmapped to mapped first reads")
+p
+ggsave(here("Rmd", "unmapped_reads_analysis_figures",
+            "unmapped_tetranucleotide_log2FC_read1.pdf"),
+       p, width=7, height =30)
+
+p <- ggplot(df_tetra[df_tetra$read == "second",], 
+            aes(x = tetranucleotide, y = log2FC, fill = sample)) +
+  geom_col(position = "dodge", size=0.8) +
+  theme_bw() +
+  theme(axis.text.y = element_text(family = "Courier")) + 
+  coord_flip() +
+  theme(strip.text = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14)) +
+  ggtitle("log2 FC of 4-mers in unmapped to mapped second reads")
+p
+ggsave(here("Rmd", "unmapped_reads_analysis_figures",
+            "unmapped_tetranucleotide_log2FC_read2.pdf"),
+       p, width=7, height =30)
+```
+
