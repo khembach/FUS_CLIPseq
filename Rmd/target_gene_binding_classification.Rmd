@@ -1,0 +1,270 @@
+---
+title: "Target gene classification of FUS binding sites"
+author: "Katharina Hembach"
+date: "10/14/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+suppressPackageStartupMessages({
+  library(here)
+  library(dplyr)
+  library(rtracklayer)
+  library(ggplot2)
+})
+```
+
+# Introduction
+
+We want to classify the FUS target genes according to the region in the mRNA that is bound by the protein: 5' UTR, exon, intron, 3' UTR.
+
+We will add the number peaks in the different regions to the list of target genes.
+
+# FUS targets and gene annotation
+
+```{r}
+fus_targets <- here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno_manually_filtered.txt")
+gtf_file <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+fus_peaks <- here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05.bed")
+
+source(here("R/data_import.R"))
+```
+
+```{r}
+targets <- read.table(fus_targets, header = TRUE)
+gtf <- import(gtf_file)
+peaks <- import(fus_peaks)
+
+anno <- prepare_anno(gtf)
+```
+
+
+# Binding site classification
+
+For each target gene, we select all peak that are located within the gene boundaries, independent of strand. We know that the peak strand from CLIPper is sometimes wrong, because it is based on the assigned gene. In regions with overlapping genes, the peaks got assigned to the wrong genes by CLIPper. We thus take all peaks overlapping with the target gene and reduce the ranges to unique regions (overlapping peaks are merged).
+
+We count the number of peaks in each of the gene regions and add the numbers to the table.
+
+Note: Some clusters have one nucleotide overlap with an intron, because of wrongly mapped reads. These cluster will be counted as intronic, even though the majority of the cluster is located in exons or UTRs. For this reason, we always require at least 2 nucleotides overlap with any region.
+
+
+```{r}
+if (!file.exists(here("Rmd/rds", "gene_region_cluster_count.rds"))) {
+  df <- data.frame(gene_id = targets$gene_id , gene = NA, exon = NA, 
+                   three_prime_utr = NA, five_prime_utr = NA, intron = NA)
+  
+  for(i in 1:nrow(targets)){
+    g <- targets$gene_id[i]
+    ## all peak clusters located within the gene boundaries
+    clus <- reduce(subsetByOverlaps(peaks, anno[["gene"]][anno[["gene"]]$gene_id == g],
+                          ignore.strand = TRUE), ignore.strand = TRUE )
+    ## annotation of the target gene
+    anno1 <- prepare_anno(gtf[gtf$gene_id == g])
+    ## remove the intronic parts that overlap with 5' or 3' UTRs from other transcripts
+    anno1[["intron"]] <- setdiff(anno1[["intron"]], 
+                                 c(anno1[["five_prime_utr"]], 
+                                   anno1[["three_prime_utr"]]))
+    
+    ## count the number of clusters that overlap with the different gene regions
+    df[i, -1] <- sapply(anno1, function(x) 
+      length(suppressWarnings(subsetByOverlaps(clus, x, type = "any", 
+                                               ignore.strand = TRUE, 
+                                               minoverlap = 2))))
+  }
+  saveRDS(object = df, file = here("Rmd/rds", "gene_region_cluster_count.rds"))
+} else{
+  df <- readRDS(here("Rmd/rds", "gene_region_cluster_count.rds"))
+}
+```
+
+Note: Exons that overlap with 3' or 5' UTRs are counted as UTRs and not exons! So all exon annotations are regions that are exclusively exonic. The same goes for intron: the parts of an intron that overlap with an exon, or any UTR are removed. So intronic peaks are overlapping exclusively intronic regions.
+
+Let's add the number of clusters to the target gene table and save it as a file.
+
+```{r}
+colnames(df) <- c("gene_id", "gene_cluster", "exon_cluster", "three_utr_cluster", "five_utr_cluster", "intron_cluster")
+
+targets_clus <- targets %>% dplyr::left_join(df)
+
+write.table(targets_clus, file = here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno_manually_filtered_cluster_location.txt"), row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+## Analysis
+
+Are there any target genes that have exclusively intronic clusters? If yes, they might be false positives!
+
+```{r}
+targets_clus[targets_clus$gene_cluster == targets_clus$intron_cluster & 
+               targets_clus$exon_cluster == 0 & 
+               targets_clus$five_utr_cluster == 0 &
+               targets_clus$three_utr_cluster == 0,]
+```
+
+How many genes have exclusively exon, 3' or 5' UTR binding?
+```{r}
+targets_clus[targets_clus$gene_cluster == targets_clus$exon_cluster &
+               targets_clus$intron_cluster == 0 & 
+               targets_clus$five_utr_cluster == 0 &
+               targets_clus$three_utr_cluster == 0,]
+targets_clus[targets_clus$gene_cluster == targets_clus$three_utr_cluster &
+               targets_clus$exon_cluster == 0 & 
+               targets_clus$five_utr_cluster == 0 &
+               targets_clus$intron == 0,]
+targets_clus[targets_clus$gene_cluster == targets_clus$five_utr_cluster & 
+               targets_clus$exon_cluster == 0 & 
+               targets_clus$three_utr_cluster == 0 &
+               targets_clus$intron == 0,]
+```
+
+### Subclasses
+
+We annotate the FUS binding class based on the location of the majority of clusters. If a gene has equal amounts of clusters in different regions, all of them will be annotated.
+
+```{r}
+## What about genes where multiple regions have the same number of clusters?
+targets_clus$class <- ""
+clus_max <- targets_clus %>% dplyr::select(exon_cluster, three_utr_cluster, 
+                               five_utr_cluster, intron_cluster) %>% 
+   apply(MARGIN = 1, max)
+
+## select the location with maximal number of clusters as the class
+ind <- targets_clus$exon_cluster == clus_max; 
+targets_clus$class[ind] <- "exon_"
+ind <- targets_clus$three_utr_cluster == clus_max
+targets_clus$class[ind] <- paste0(targets_clus$class[ind], "three_utr_")
+ind <- targets_clus$five_utr_cluster == clus_max
+targets_clus$class[ind] <- paste0(targets_clus$class[ind], "five_utr_")
+ind <- targets_clus$intron == clus_max
+targets_clus$class[ind] <- paste0(targets_clus$class[ind], "intron")
+targets_clus$class <- gsub(pattern = "_$", replacement = "", x = targets_clus$class)
+table(targets_clus$class)
+```
+
+
+## Comparison with RNA-seq
+
+Are there any observable differences in binding sites? Maybe depending on gene length, gene biotype?
+
+Are there differences in FUS binding between the three different types?
+
+ 1. FUS targets up regulated in RNA-seq (SNS vs. homogenate, 6 months)
+ 2. FUS targets down regulated in RNA-seq (SNS vs. homogenate, 6 months)
+ 3. FUS targets not changed in RNA-seq 
+ 
+ 
+```{r}
+rna_dir <- file.path("../../..","sonu_RNAseq", "polyA_Aug2019")
+up_targets <- read.table(file.path(rna_dir, "results/SNS.KI.6_mo_vs_SNS.WT.6_mo_up_FUS_targets.txt"), header = TRUE)
+down_targets <- read.table(file.path(rna_dir, "results/SNS.KI.6_mo_vs_SNS.WT.6_mo_down_FUS_targets.txt"), header = TRUE)
+
+targets_clus$RNAseq_DE <- "unchanged"
+## 1.
+ind <- targets_clus$gene_id %in% up_targets$gene_id
+targets_clus$RNAseq_DE[ind] <- "up"
+targets_clus[ind,]$class %>% table
+## 2. 
+ind <- targets_clus$gene_id %in% down_targets$gene_id
+targets_clus$RNAseq_DE[ind] <- "down"
+targets_clus[ind,]$class %>% table
+## 3.
+ind <- !(targets_clus$gene_id %in% up_targets$gene_id | targets_clus$gene_id %in% down_targets$gene_id)
+targets_clus[ind,]$class %>% table
+```
+
+ 1. FUS targets up regulated in RNA-seq (SNS vs. homogenate, 6 months): mostly exonic FUS binding
+ 2. FUS targets down regulated in RNA-seq (SNS vs. homogenate, 6 months): 3' UTR binding
+ 3. FUS targets not changed in RNA-seq: all types of binding
+
+
+```{r}
+write.table(targets_clus, file = here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno_manually_filtered_cluster_location_classified.txt"), row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+
+## Visualization
+
+Barplot with the different binding types in the 3 types of FUS targets:
+```{r}
+## compute the percentage of binding classes among the 3 types of FUS targets
+df_perc <- targets_clus %>% 
+  group_by(RNAseq_DE, class) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count))
+
+## Barplot
+# 6: darkred, 1, 2, 7, 8, 9   exon
+# 2:  4, 3              five_utr
+# 1: 13                 intron
+# 3: 10, 11, 12         three_utr
+
+
+## Color blind palette
+muted <- c("#DC050C","#E8601C","#7BAFDE","#1965B0","#B17BA6",
+               "#882E72","#F1932D","#F6C141","#F7EE55","#4EB265",
+               "#90C987","#CAEDAB","#777777") ## My custom colors
+cols <- c("firebrick", muted[c(1, 2, 7, 8, 9, 4, 3, 13, 10, 11, 12)])
+ 
+ggplot(df_perc, aes(x = factor(RNAseq_DE), y = perc*100, fill = factor(class))) +
+  geom_bar(stat="identity", width = 0.7) +
+  labs(x = "FUS targets in RNAseq DE analysis\nSNS WT vs. KI (6 months)", 
+       y = "percent", fill = "FUS binding in") +
+  theme_bw(base_size = 14) +
+  scale_fill_manual(values = cols) + 
+  theme(axis.text = element_text(size=12),
+        axis.text.x = element_text(angle=45, hjust=1))
+
+ggsave(here("Rmd/target_gene_binding_classification_figures/FUS_target_binding_class_barplot.pdf"), width = 5, height = 5)
+```
+
+
+
+Can we cluster the genes based on the number of peaks in the different gene regions?
+
+Or some other visualization?
+
+```{r, eval = FALSE, include = FALSE}
+  df$peaks <- rownames(df)
+  df[,names(df) != "peaks"] <- apply(df[,names(df) != "peaks"], 2, as.integer)
+  
+  df <- df %>% gather(key = "annotation", value = "peak_number", -peaks)
+  df <- df[df$annotation != "gene",]
+  df$percentage <- df$peak_number / sapply(df$peaks, function(x) 
+    sum(df[df$peaks == x, "peak_number"]) ) * 100
+  
+  ## reorder the annotation factor levels
+  df$annotation <- factor(df$annotation, 
+                          levels = c("exon", "five_prime_utr", 
+                                     "three_prime_utr", "intron"))
+  print(df)
+  ## stacked barplot with the percentage of reads in the different gene regions
+  print(ggplot(df, aes(x = peaks, y = percentage, fill = annotation)) +
+          geom_col(position = "stack") +
+          theme_bw() +
+          theme(text=element_text(size=25), axis.text.x = element_text(angle = 45, 
+                                                                       hjust = 1))
+  )
+```
+
+ 
+## Number of clusters at the different locations
+
+How many clusters are located in introns, exons, 3'/5' UTRs (independent of the genes)?
+
+```{r}
+df %>% group_by(class) %>%
+  
+  
+df %>% dplyr::select(df, nr_peaks, gene_cluster, exon_cluster, three_utr_cluster, five_utr_cluster, intron_cluster) %>%
+  head
+  
+```
+
+
+
+
+
+ 
