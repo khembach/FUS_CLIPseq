@@ -61,7 +61,7 @@ read_omni <- function(path = NA, metadat = NA) {
 #' @importFrom GenomicFeatures makeTxDbFromGRanges
 #'
 #' @examples
-prepare_anno <- function(gtf){
+prepare_anno_old <- function(gtf){
   exon <- gtf[gtf$type == "exon"] %>% unique
   gene <- gtf[gtf$type == "gene"] %>% unique
   five_utr <- gtf[gtf$type == "five_prime_utr"] %>% unique
@@ -84,6 +84,42 @@ prepare_anno <- function(gtf){
   anno
 }
 
+
+#' Prepare gtf annotation
+#'
+#' Split GTF annotation into intron, exon, 3'UTR and 5'UTR. The exonic parts 
+#' that overlap with UTRs are counted as UTRs! Intronic parts that overlap 
+#' with exons or UTRs are not considered introns.
+#'
+#' @param gtf GRanges object
+#'
+#' @return GRangesList with exon, intron, 3'UTR and 5'UTR annotation
+#' @export
+#' 
+#' @importFrom GenomicFeatures makeTxDbFromGRanges
+#'
+#' @examples
+prepare_anno <- function(gtf){
+  exon <- gtf[gtf$type == "exon"] %>% unique
+  gene <- gtf[gtf$type == "gene"] %>% unique
+  five_utr <- gtf[gtf$type == "five_prime_utr"] %>% unique
+  three_utr <- gtf[gtf$type == "three_prime_utr"] %>% unique
+  
+  ## We remove all 3' and 5' UTR regions that overlap with any exons
+  exon_utr <- setdiff(exon, three_utr)
+  exon_unique <- setdiff(exon_utr, five_utr) %>% unique
+  anno <- GRangesList(gene = gene, exon = exon_unique, three_prime_utr = three_utr, 
+             five_prime_utr = five_utr)
+  
+  ## intron annotation
+  txdb <- makeTxDbFromGRanges(gtf)
+  introns <- unlist(intronsByTranscript(txdb))
+  ## remove the intronic parts that overlap with exons from other transcripts
+  anno[["intron"]] <- setdiff(introns, c(anno[["exon"]], 
+                                         anno[["three_prime_utr"]], 
+                                         anno[["five_prime_utr"]]))
+  anno
+}
 
 
 #' Peak location barplot

@@ -15,6 +15,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(rtracklayer)
   library(ggplot2)
+  library(tibble)
 })
 ```
 
@@ -184,6 +185,24 @@ targets_clus[ind,]$class %>% table
 write.table(targets_clus, file = here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno_manually_filtered_cluster_location_classified.txt"), row.names = FALSE, quote = FALSE, sep = "\t")
 ```
 
+### Table with all targets and logFC, p-value and FDR from RNA-seq DE analysis
+
+We add the logFC, p-value and FDR from the 6 months SNS KI vs. SNS WT comparison to the table.
+
+```{r}
+se <- readRDS(file.path(rna_dir, "output/outputR/edgeR_dge.rds"))
+## Get gene-level SummarizedExperiment object
+sg <- se$sg
+metadata <- colData(sg)
+sg
+comp<- names(rowData(sg))[7:10]
+sns_6m <- rowData(sg)[[comp[4]]] %>% as.data.frame
+
+targets_joined <- targets_clus %>% dplyr::left_join(sns_6m)
+
+write.table(targets_joined, file = here("analysis/deduplicated/MA_plot_selection/top_peaks_loess_adjM_pValue_1e-05_gene_anno_manually_filtered_cluster_location_classified_RNAseq_6m.txt"), row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
 
 ## Visualization
 
@@ -206,7 +225,7 @@ df_perc <- targets_clus %>%
 muted <- c("#DC050C","#E8601C","#7BAFDE","#1965B0","#B17BA6",
                "#882E72","#F1932D","#F6C141","#F7EE55","#4EB265",
                "#90C987","#CAEDAB","#777777") ## My custom colors
-cols <- c("firebrick", muted[c(1, 2, 7, 8, 9, 4, 3, 13, 10, 11, 12)])
+cols <- c("firebrick", muted[c(1, 2, 7, 8, 9, 4, 13, 10)])
  
 ggplot(df_perc, aes(x = factor(RNAseq_DE), y = perc*100, fill = factor(class))) +
   geom_bar(stat="identity", width = 0.7) +
@@ -249,7 +268,6 @@ Or some other visualization?
   )
 ```
 
- 
 ## Number of clusters at the different locations
 
 How many clusters are located in introns, exons, 3'/5' UTRs (independent of the genes)?
@@ -260,7 +278,6 @@ df %>% group_by(class) %>%
   
 df %>% dplyr::select(df, nr_peaks, gene_cluster, exon_cluster, three_utr_cluster, five_utr_cluster, intron_cluster) %>%
   head
-  
 ```
 
 
