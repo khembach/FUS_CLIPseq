@@ -1,0 +1,123 @@
+---
+title: "3' UTR FUS target sequences"
+author: "Katharina Hembach"
+date: "7/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(BSgenome.Mmusculus.UCSC.mm10)
+  library(here)
+  library(rtracklayer)
+})
+```
+
+# Import data
+
+```{r}
+outdir <- file.path(here(), "analysis", "deduplicated", "MA_plot_selection", "three_UTR_FUS_targets")
+GTF <- "/home/Shared/data/annotation/Mouse/Ensembl_GRCm38.90/gtf/Mus_musculus.GRCm38.90.gtf"
+genome <- BSgenome.Mmusculus.UCSC.mm10
+
+all_gtf <- import(GTF)
+all_peaks <- import(file.path(here(), "analysis", "deduplicated", "MA_plot_selection", "selected_peaks", "selected_peaks_SNS_pValue_1e-05.bed"))
+targets <- c("Gria3", "Gabrb3", "Gabbr1", "Gabbr2")
+```
+
+# Extract 3'UTR sequence bound by FUS
+
+We center a window of length 800bp around the FUS peak and extract the genomic sequences.
+```{r 3-UTR, warnings = FALSE}
+## We also include the Gabra1 3' UTR, because it has a peak in the last exon
+ann <- all_gtf[all_gtf$gene_name == "Gabra1"]
+olaps <- findOverlaps(all_peaks, ann[ann$type == "gene"])
+peak <- all_peaks[queryHits(olaps)]
+peak$name <- ann[ann$type == "gene"]$gene_name[subjectHits(olaps)]
+utr <- unique(ann[ann$type == "three_prime_utr"])
+center <- start(peak) + floor((end(peak) - start(peak)) / 2)
+## make sure the window is inside the UTR
+peak_end <- if(center + 400 <= end(utr)) center + 400 else end(utr)
+start(peak) <- if(peak_end - 800 >= start(utr)) peak_end - 800 else start(utr)
+end(peak) <- peak_end
+
+## We also need the sequence of the full 3'UTR of Gabra1
+seqlevelsStyle(utr) <- "UCSC"
+export(getSeq(genome, utr), file.path(outdir, "full_three_utr_Gabra1.fasta"))
+
+
+
+## subset the genes of interest
+gtf <- all_gtf[all_gtf$gene_name %in% targets]
+olaps <- findOverlaps(all_peaks, gtf[gtf$type == "gene"])
+peaks <- all_peaks[queryHits(olaps)]
+peaks$name <- gtf[gtf$type == "gene"]$gene_name[subjectHits(olaps)]
+## get the 3' UTR per gene
+get_peak_seq <- function(peak, gtf){
+  ann <- gtf[gtf$gene_name == peak$name]
+  utr <- unique(ann[ann$type == "three_prime_utr"])
+  utr <- subsetByOverlaps(utr, peak)
+  utr <- GRanges(seqnames = seqnames(utr)[1], 
+                 range = IRanges(start = min(start(utr)), end = max(end(utr))),
+                 strand = strand(utr)[1])
+  center <- start(peak) + floor((end(peak) - start(peak)) / 2)
+    ## make sure the window is inside the UTR
+  start(peak) <- if(center - 400 >= start(utr)) center - 400 else start(utr)
+  end(peak) <- if( start(peak) + 800 <= end(utr)) start(peak) + 800 else end(utr)
+  peak
+}
+
+windows <- GRangesList(lapply(split(peaks, seq(1, length(peaks))), 
+                              function(x) get_peak_seq(x, gtf)))
+## add Gabra1 window
+windows[[length(windows) + 1]] <- peak
+windows <- unique(unlist(windows))
+windows
+## save windows as BED file for display in IGV
+mcols(windows)[,"score"] <- NULL
+names(windows) <- windows$name
+export(windows, file.path(outdir, "three_utr_peaks.bed"))
+seqlevelsStyle(windows) <- "UCSC"
+## extract sequence
+three_utr_seq <- getSeq(genome, windows)
+export(three_utr_seq, file.path(outdir, "three_utr_peaks.fasta"))
+
+```
+
+## Extract 5' UTR sequence
+We also need the 5'UTR sequence of the target genes. We take the last 300bp of the 5'UTR.
+
+```{r 5-UTR, warnings = FALSE}
+## get 5'UTR
+get_5_utr_seq <- function(gene, gtf){
+  ann <- gtf[gtf$gene_name == gene]
+  utr <- unique(ann[ann$type == "five_prime_utr"])
+  utr <- utr[order(width(utr), decreasing = TRUE)]
+  ## we take the longest UTR with < 300 bps
+  ind <- which(width(utr) < 300)
+  utr <- if (length(ind) == 0) {
+    utr <- utr[length(utr)]
+    end(utr) <- start(utr) + 299 ## we take the first 300bps
+    utr
+    } else utr[ind[1]]
+  utr
+}
+five_utr <- GRangesList(lapply(c(targets, "Gabra1"), function(x) 
+  get_5_utr_seq(x, all_gtf)))
+five_utr <- unlist(five_utr)
+names(five_utr) <- five_utr$gene_name
+mcols(five_utr) <- NULL
+five_utr
+
+export(five_utr, file.path(outdir, "five_utr_peaks.bed"))
+seqlevelsStyle(five_utr) <- "UCSC"
+## extract sequence
+five_utr_seq <- getSeq(genome, five_utr)
+export(five_utr_seq, file.path(outdir, "five_utr_peaks.fasta"))
+```
+
