@@ -50,6 +50,11 @@ end(peak) <- peak_end
 seqlevelsStyle(utr) <- "UCSC"
 export(getSeq(genome, utr), file.path(outdir, "full_three_utr_Gabra1.fasta"))
 
+## Sequence of the target peak in the last exon to the first peak in the 3'UTR
+gabra1 <- GRanges(seqnames = "chr11", ranges = IRanges(42133174, 42133590),
+               strand = "-")
+export(getSeq(genome, gabra1), 
+       file.path(outdir, "three_utr_last_exon_Gabra1.fasta"))
 
 
 ## subset the genes of interest
@@ -86,6 +91,19 @@ seqlevelsStyle(windows) <- "UCSC"
 ## extract sequence
 three_utr_seq <- getSeq(genome, windows)
 export(three_utr_seq, file.path(outdir, "three_utr_peaks.fasta"))
+
+## Gabbr2: entire 3'UTR sequence; 3'UTR without the selected FUS peak 
+## (from start of UTR to start of FUS peak)
+ann <- all_gtf[all_gtf$gene_name == "Gabbr2"]
+utr <- unique(ann[ann$type == "three_prime_utr"])
+seqlevelsStyle(utr) <- "UCSC"
+export(getSeq(genome, utr), 
+       file.path(outdir, "full_three_utr_Gabbr2.fasta"))
+## 3'UTR up to start of FUS peak
+peak_start <- max(end(peaks[peaks$name == "Gabbr2"]))
+start(utr) <- peak_start + 1
+export(getSeq(genome, utr), 
+       file.path(outdir, "three_utr_Gabbr2_without_FUS_peak.fasta"))
 
 ```
 
