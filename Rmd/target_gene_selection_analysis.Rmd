@@ -108,7 +108,7 @@ We fit a LOESS curve through the MA plot. Then, we adjust the M values by the LO
 
 ```{r export-objects-mark, include = FALSE, eval = TRUE}
 if (!file.exists(here("Rmd", "rds", "peak_counts.RDS"))){
-  cts_clip <- data.frame(SNS = counts[["SNS_70K"]]$record, 
+  cts_clip <- data.frame(SNS = counts[["SNS_70K"]]$records, 
                          homogenate = counts[["HOMO_70K"]]$records)
   
   dge <- edgeR::DGEList(cts_clip, group = factor(colnames(cts_clip)))
@@ -229,6 +229,15 @@ ggsave(file.path(fig_dir, "fig2", "MA_pValue_SNS.png"), plot = p,
        width = 7, height = 5.5, dpi = 500)
 ```
 
+What are the genes in the line on the top left corner?
+```{r MA-plot-top-line}
+row_order <- order(lrt$table$logFC, decreasing=TRUE) %>% head
+lrt$table[head(row_order),]
+## what are the raw counts for this peak?
+dge$counts[head(row_order),]
+## this are the peaks with 0 reads in the total cortex sample
+## They separate from the rest of the points because of the prior count (0.125) that allows us to compute the log2FC for these peaks
+```
 
 
 ## Number of peaks and genes at different p-value cutoffs
@@ -298,11 +307,26 @@ peak_gene_region_barplot <- function(peaks, anno) {
                               "pVal_1em3","pVal_5em4", "pVal_1em4", "pVal_5em5",
                               "pVal_1em5"),
                            name = "p-value cutoff") +
+           # scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+           #                   values = c("exon" = "#9C3B8C", 
+           #                              "five_prime_utr" = "#43BB5F",
+           #                              "three_prime_utr" = "cyan4", 
+           #                              "intron" = "#7BAFDE")) +
+           # scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+           #                   values = c("exon" = "#B17BA6", 
+           #                              "five_prime_utr" = "#F7EE55",
+           #                              "three_prime_utr" = "#E68E34", 
+           #                              "intron" = "#90C987")) +
+           # scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+           #                   values = c("exon" = "#9B6EAD", 
+           #                              "five_prime_utr" = "#F19903",
+           #                              "three_prime_utr" = "#F3DB3C", 
+           #                              "intron" = "#33A28B")) +    
            scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
-                             values = c("exon" = "#9C3B8C", 
-                                        "five_prime_utr" = "#43BB5F",
-                                        "three_prime_utr" = "cyan4", 
-                                        "intron" = "#7BAFDE")) +
+                             values = c("exon" = "#736EAD", 
+                                        "five_prime_utr" = "#F19903",
+                                        "three_prime_utr" = "#F3DB3C", 
+                                        "intron" = "#018C89")) +              
           ggtitle("cortical SNS")
   )
 }
@@ -314,8 +338,12 @@ ggsave(here("Rmd", "target_gene_selection_analysis_figures",
 ```
 
 ```{r, dependson = "loess-p-value-different-cutoffs-barplot", cache = TRUE}
-ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_SNS.pdf"), 
+# ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_SNS.pdf"), 
+#        plot = p, width = 5, height = 5)
+
+ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_SNS_colors.pdf"), 
        plot = p, width = 5, height = 5)
+
 ```
 
 
@@ -340,7 +368,6 @@ write.table(loess_targets,
             quote = FALSE, row.names = FALSE, sep = "\t")
 ```
 
-
 Write a BED file with the location of the selected peaks.
 ```{r export-SNS-BED}
 bed_file <- file.path(out_dir, "selected_peaks", 
@@ -350,6 +377,46 @@ if(!file.exists(bed_file)) {
   export(loess_peaks, bed_file)
 }
 ```
+
+We also save the annotated peaks as an R object.
+```{r save-loess-peaks-RDS}
+saveRDS(peaks_list_pValue, here("Rmd", "rds", paste0("loess_peaks_sns_list_pValue.RDS")))
+saveRDS(loess_peaks, here("Rmd", "rds", paste0("loess_peaks_sns_pValue_", pValue_cut, ".RDS")))
+```
+
+
+We look at some targets with less stringent p-value cutoffs.
+```{r targets-less-stringent-cutoff}
+loess_peaks_less <- peaks_list_pValue[["pVal_1em4"]]
+loess_peaks_less <- add_gene_annotation(loess_peaks_less, anno[["gene"]])
+
+loess_targets_less <- loess_peaks_less %>%
+    as.data.frame() %>%
+    dplyr::group_by(gene_id) %>%
+    dplyr::select(seqnames, gene_id, gene_name, gene_biotype) %>%
+    dplyr::mutate(nr_peaks = dplyr::n()) %>%
+    dplyr::arrange(desc(nr_peaks)) %>%
+    unique()
+head(loess_targets_less)
+
+write.table(loess_targets_less,
+            file = file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_1e-04_gene_anno.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+## which genes are new and not in the list with the most stringent cutoff?
+loess_targets_less[!loess_targets_less$gene_id %in% loess_targets$gene_id,] %>% head
+write.table(loess_targets_less[!loess_targets_less$gene_id %in% loess_targets$gene_id,],
+            file = file.path(out_dir, paste0("top_peaks_loess_adjM_pValue_1e-04_gene_anno_not_in_1e-05.txt")),
+            quote = FALSE, row.names = FALSE, sep = "\t")
+
+
+bed_file <- file.path(out_dir, "selected_peaks", 
+                      paste0("selected_peaks_SNS_pValue_1e-04.bed"))
+if(!file.exists(bed_file)) {
+  export(loess_peaks_less, bed_file)
+}
+```
+
+
 
 ```{r barplot-peak-location-comparison-SNS, cache = TRUE}
 peak_gene_region_barplot_subs <- function(peaks, anno) {
@@ -434,7 +501,7 @@ ggsave(file.path(fig_dir, "fig2", "MA_pValue_cutoff_SNS.png"), plot = p,
 ## Manual peak filtering
 
 We manually filtered the genes assigned to each peak (see filter_fUS_targets.html) and removed wrong gene assignments from CLIPper.
-We import the fitlered list and used it for the following analyses.
+We import the filtered list and used it for the following analyses.
 
 ```{r}
 ## Manually filtered list of target genes (genes on the wrong strand are removed)
@@ -820,6 +887,96 @@ ggsave(here("Rmd", "target_gene_selection_analysis_figures",
             "peak_mean_coverage_vs_mean_cpm.png"), width = 6.5, height = 5)
 ```
 
+
+# Max peak coverage in introns and exons
+What is the distribution of the maximal number of reads in intronic and exonic peaks?
+```{r max-reads-intron-exon}
+## get all intronic peaks
+intr_peaks <- subsetByOverlaps(loess_peaks, anno[["intron"]])
+length(intr_peaks)
+exon_peaks <- subsetByOverlaps(loess_peaks, anno[["intron"]], invert = TRUE)
+length(exon_peaks)
+gg_dat <- data.frame(max_cov = c(max(cov[["SNS_70K"]][intr_peaks]), 
+                       max(cov[["SNS_70K"]][exon_peaks])),
+           location = c(rep("intron", length(intr_peaks)), 
+                        rep("exon", length(exon_peaks))))
+p <- ggplot(gg_dat, aes(x = location, y = max_cov)) +
+  geom_violin(alpha = 0.4) +
+  geom_boxplot(alpha = 1, outlier.shape = NA, width=0.3, fill = "white") + 
+  scale_y_log10() +
+  theme_light(base_size = 16) + 
+  guides(alpha = FALSE, fill = FALSE) +
+  # facet_grid(vars(measure), scale = "free_y") +
+  xlab("peak location") + ylab("maximal peak height (# reads)") +
+  # scale_fill_manual(values = c("#117733", "#882255")) +
+  theme(strip.background = element_rect(fill = "white"), 
+      strip.text.x = element_text(colour = "black", face = "bold"),
+      strip.text.y = element_text(colour = "black", face = "bold"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.x = element_blank())
+
+ggsave(file.path(fig_dir, "fig2_supp", "boxplot_max_cov_intron_exon_peak.png"), 
+        plot = p, width = 5, height = 5, type = "cairo", dpi = 500)
+
+
+## median coverage
+gg_dat <- data.frame(max_cov = c(median(cov[["SNS_70K"]][intr_peaks]), 
+                       median(cov[["SNS_70K"]][exon_peaks])),
+           location = c(rep("intron", length(intr_peaks)), 
+                        rep("exon", length(exon_peaks))))
+p <- ggplot(gg_dat, aes(x = location, y = max_cov)) +
+  geom_violin(alpha = 0.4) +
+  geom_boxplot(alpha = 1, outlier.shape = NA, width=0.3, fill = "white") + 
+  scale_y_log10() +
+  theme_light(base_size = 16) + 
+  guides(alpha = FALSE, fill = FALSE) +
+  # facet_grid(vars(measure), scale = "free_y") +
+  xlab("peak location") + ylab("median peak height (# reads)") +
+  # scale_fill_manual(values = c("#117733", "#882255")) +
+  theme(strip.background = element_rect(fill = "white"), 
+      strip.text.x = element_text(colour = "black", face = "bold"),
+      strip.text.y = element_text(colour = "black", face = "bold"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.x = element_blank())
+
+ggsave(file.path(fig_dir, "fig2_supp", "boxplot_max_cov_intron_exon_peak_median.png"), 
+        plot = p, width = 5, height = 5, type = "cairo", dpi = 500)
+
+
+## what if we remove the intronic peaks that overlap both introns and exons?
+intr_only_peaks <- subsetByOverlaps(loess_peaks, anno[["intron"]], type = "within")
+length(intr_only_peaks)
+not_intron_peaks <- subsetByOverlaps(loess_peaks, intr_only_peaks, type = "equal", invert = TRUE)
+length(not_intron_peaks)
+gg_dat <- data.frame(max_cov = c(max(cov[["SNS_70K"]][intr_only_peaks]), 
+                       max(cov[["SNS_70K"]][not_intron_peaks])),
+           location = c(rep("intron", length(intr_only_peaks)), 
+                        rep("exon", length(not_intron_peaks))))
+p <- ggplot(gg_dat, aes(x = location, y = max_cov)) +
+  geom_violin(alpha = 0.4) +
+  geom_boxplot(alpha = 1, outlier.shape = NA, width=0.3, fill = "white") + 
+  scale_y_log10() +
+  theme_light(base_size = 16) + 
+  guides(alpha = FALSE, fill = FALSE) +
+  # facet_grid(vars(measure), scale = "free_y") +
+  xlab("peak location") + ylab("maximal peak height (# reads)") +
+  # scale_fill_manual(values = c("#117733", "#882255")) +
+  theme(strip.background = element_rect(fill = "white"), 
+      strip.text.x = element_text(colour = "black", face = "bold"),
+      strip.text.y = element_text(colour = "black", face = "bold"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.x = element_blank())
+
+ggsave(file.path(fig_dir, "fig2_supp", "boxplot_max_cov_within_intron_exon_peak.png"), 
+        plot = p, width = 5, height = 5, type = "cairo", dpi = 500)
+```
+
+
+
+
+
+
+
 TOOO:
 - include points with cpm of 0 or Na? they get cut off at the left border
 - include density lines? so we can see where the majority of points is?
@@ -1004,7 +1161,7 @@ ggsave(file.path(fig_dir, "fig2_supp", "MA_pValue_sns.png"), plot = p,
 
 ## Number of peaks and genes at different p-value cutoffs
 
-We order the peaks basesd on the p-values and pick the same number as SNS specific peaks.
+We order the peaks based on the p-values and pick the same number as SNS specific peaks.
 
 ```{r}
 ## number of SNS peaks and genes
@@ -1092,11 +1249,16 @@ peak_gene_region_barplot <- function(peaks, anno) {
                               "pVal_1em3","pVal_5em4", "pVal_1em4", "pVal_5em5",
                               "pVal_1em5"),
                            name = "p-value cutoff") +
+           # scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+           #                   values = c("exon" = "#9C3B8C", 
+           #                              "five_prime_utr" = "#43BB5F",
+           #                              "three_prime_utr" = "cyan4", 
+           #                              "intron" = "#7BAFDE")) +
            scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
-                             values = c("exon" = "#9C3B8C", 
-                                        "five_prime_utr" = "#43BB5F",
-                                        "three_prime_utr" = "cyan4", 
-                                        "intron" = "#7BAFDE")) +
+                             values = c("exon" = "#736EAD", 
+                                        "five_prime_utr" = "#F19903",
+                                        "three_prime_utr" = "#F3DB3C", 
+                                        "intron" = "#018C89")) +              
           ggtitle("total cortex")
   )
 }
@@ -1109,7 +1271,7 @@ ggsave(here("Rmd", "target_gene_selection_analysis_figures",
 ```
 
 ```{r, dependson = "loess-p-value-different-cutoffs-barplot-total", cache = TRUE}
-ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_total.pdf"), 
+ggsave(file.path(fig_dir, "fig2_supp", "pValue_cutoffs_barplot_total_color.pdf"), 
        plot = p, width = 5, height = 5)
 ```
 
@@ -1252,11 +1414,16 @@ peak_gene_region_barplot_subs_selected <- function(peaks, anno) {
                            labels=c("cortex", "SNS"),
                            limits = c("cortex", "SNS"),
                            name = "selected peaks") +
+           # scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
+           #                   values = c("exon" = "#9C3B8C", 
+           #                              "five_prime_utr" = "#43BB5F",
+           #                              "three_prime_utr" = "cyan4", 
+           #                              "intron" = "#7BAFDE"))
            scale_fill_manual(labels = c("exon", "5' UTR", "3' UTR", "intron"), 
-                             values = c("exon" = "#9C3B8C", 
-                                        "five_prime_utr" = "#43BB5F",
-                                        "three_prime_utr" = "cyan4", 
-                                        "intron" = "#7BAFDE"))
+                             values = c("exon" = "#736EAD", 
+                                        "five_prime_utr" = "#F19903",
+                                        "three_prime_utr" = "#F3DB3C", 
+                                        "intron" = "#018C89"))              
   )
 }
 
@@ -1270,7 +1437,7 @@ ggsave(here("Rmd", "target_gene_selection_analysis_figures",
 ```
 
 ```{r}
-ggsave(file.path(fig_dir, "fig2", "pValue_cutoff_barplot_selected_SNS_total.png"), 
+ggsave(file.path(fig_dir, "fig2", "pValue_cutoff_barplot_selected_SNS_total_color.png"), 
        plot = peak_gene_region_barplot_subs_selected(subs, anno), 
        width = 5, height = 5, dpi = 500)
 ```
